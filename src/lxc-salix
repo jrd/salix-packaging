@@ -1,0 +1,533 @@
+#!/bin/bash
+# vim: et sw=2 ts=2 sts=2:
+
+#
+# lxc: linux Container library
+
+# Authors:
+# Daniel Lezcano <daniel.lezcano@free.fr>
+# ponce <matteo.bernardini@gmail.com>
+# Frédéric Galusik <fredg~at~salixos~dot~org>
+# Cyrille Pontvieux <jrd@enialis.net>
+
+# template for Salix OS by Frédéric Galusik <fredg~at~salixos~dot~org>
+# Heavily based on the one for Slackware that build a very minimal
+# slackware container.
+# This template will build a ready to use Salix core system in a
+# linux container.
+# Homepage: http://lxc.sourceforge.net/
+
+# template for slackware by ponce <matteo.bernardini@gmail.com>
+# some parts are taken from the debian one (used as model)
+# https://github.com/Ponce/lxc-slackware
+
+
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+default_path=/var/lib/lxc
+default_arch=
+case "$( uname -m )" in
+  i?86) default_arch=i486 ;;
+  arm*) default_arch=arm ;;
+  *) default_arch=$(uname -m) ;;
+esac
+default_release=14.1
+# is this slackware
+[ -f /etc/slackware-version ] && is_slack=true
+# is this salix
+[ -n "$is_slack" ] && [ -f /etc/slapt-get/slapt-getrc ] && grep -q salix /etc/slapt-get/slapt-getrc && is_salix=true
+if [ "$is_slack" ]; then
+  default_release=$(sed -r 's/.* ([^.]+)\.([^.]+)(\..*)?/\1.\2/' /etc/slackware-version)
+else
+  echo "This is not a slackware or salix host and release is missing, defaulting to $default_release. use -R|--release to specify release"
+fi
+root_password=root
+MIRROR=${MIRROR:-http://download.salixos.org}
+CORE_PKGS=${CORE_PKGS:-https://raw.github.com/gapan/iso-creation/master/lists-xfce/CORE}
+SETTINGS_PKGS=${SETTINGS_PKGS:-https://raw.github.com/gapan/iso-creation/master/lists-xfce/SETTINGS}
+
+copy_configuration() {
+  mkdir -p $config_path
+  cat <<EOF >> $config_path/config
+lxc.utsname = $name
+lxc.rootfs = $rootfs_path
+lxc.mount = $config_path/fstab
+lxc.tty = 2
+lxc.pts = 1024
+lxc.cgroup.devices.deny = a
+# /dev/null and zero
+lxc.cgroup.devices.allow = c 1:3 rwm
+lxc.cgroup.devices.allow = c 1:5 rwm
+# consoles
+lxc.cgroup.devices.allow = c 5:1 rwm
+lxc.cgroup.devices.allow = c 5:0 rwm
+lxc.cgroup.devices.allow = c 4:0 rwm
+lxc.cgroup.devices.allow = c 4:1 rwm
+# /dev/{,u}random
+lxc.cgroup.devices.allow = c 1:9 rwm
+lxc.cgroup.devices.allow = c 1:8 rwm
+lxc.cgroup.devices.allow = c 136:* rwm
+lxc.cgroup.devices.allow = c 5:2 rwm
+# rtc
+lxc.cgroup.devices.allow = c 254:0 rwm
+
+# we don't trust root user in the container, better safe than sorry.
+# comment out only if you know what you're doing.
+lxc.cap.drop = sys_module mknod
+lxc.cap.drop = mac_override sys_time
+lxc.cap.drop = setfcap setpcap sys_boot
+
+# if you want to be even more restrictive with your container's root
+# user comment the three lines above and uncomment the following one
+# lxc.cap.drop=sys_admin
+EOF
+  cat <<EOF > $config_path/fstab
+proc            $rootfs_path/proc         proc    nodev,noexec,nosuid 0 0
+sysfs           $rootfs_path/sys          sysfs   defaults 0 0
+tmpfs           $rootfs_path/dev/shm      tmpfs   defaults 0 0
+lxcpts          $rootfs_path/dev/pts      devpts  defaults,newinstance 0 0
+EOF
+  if [ $? -ne 0 ]; then
+    echo "Failed to add configuration." >&2
+    return 1
+  fi
+  return 0
+}
+
+download_salix() {
+  mkdir -p $cache
+  if [ -e $cache/pkgs.lst ] && [ -e $cache/location.lst ]; then
+    echo "Using cache"
+    return 0
+  fi
+  echo "Downloading Salix OS core packages lists..."
+  wget -nv -O $cache/CORE $CORE_PKGS && wget -nv -O $cache/SETTINGS $SETTINGS_PKGS
+  if [ $? -ne 0 ]; then
+    echo "Failed to download the packages lists, aborting." >&2
+    return 1
+  fi
+  grep -v '^kernel' $cache/CORE | sort > $cache/pkgs.lst
+  grep -v '^kernel' $cache/SETTINGS | sort >> $cache/pkgs.lst
+  rm -f $cache/CORE $cache/SETTINGS
+  if [ "$arch" = "i486" ] || [ "$arch" = "x86_64" ]; then
+    slackfolder=slackware
+  elif [ "$arch" = "arm" ]; then
+    slackfolder=slackwarearm
+  fi
+  wget -nv -O - "$MIRROR"/$arch/$release/PACKAGES.TXT.gz | gunzip -c | grep '^PACKAGE NAME:\|PACKAGE MIRROR:\|PACKAGE LOCATION:' > $cache/location.lst && \
+    wget -nv -O - "$MIRROR"/$arch/$slackfolder-$release/patches/PACKAGES.TXT.gz | gunzip -c | grep '^PACKAGE NAME:\|PACKAGE MIRROR:\|PACKAGE LOCATION:' >> $cache/location.lst && \
+    wget -nv -O - "$MIRROR"/$arch/$slackfolder-$release/extra/PACKAGES.TXT.gz | gunzip -c | grep '^PACKAGE NAME:\|PACKAGE MIRROR:\|PACKAGE LOCATION:' >> $cache/location.lst && \
+    wget -nv -O - "$MIRROR"/$arch/$slackfolder-$release/PACKAGES.TXT.gz | gunzip -c | grep '^PACKAGE NAME:\|PACKAGE MIRROR:\|PACKAGE LOCATION:' >> $cache/location.lst
+  if [ $? -ne 0 ]; then
+    echo "Failed to download the packages location, aborting." >&2
+    return 1
+  fi
+  echo "Downloading Salix OS core packages..."
+  n=$(cat $cache/pkgs.lst | wc -l)
+  i=0
+  for p in $(cat $cache/pkgs.lst); do
+    i=$(($i + 1))
+    pkg_name=''
+    pkg_mirror=''
+    pkg_location=''
+    pkg_info=$(mktemp)
+    grep -A 3 "^PACKAGE NAME: *$p-[^-]\+-[^-]\+-[^-]\+\.t[gblx]z" $cache/location.lst | head -n 3 > $pkg_info
+    while read l; do
+      if [ -z "$pkg_name" ] && echo "$l" | grep -q "^PACKAGE NAME:"; then
+        pkg_name=$(echo "$l" | sed 's/^PACKAGE NAME: *//')
+      fi
+      if [ -z "$pkg_mirror" ] && echo "$l" | grep -q "^PACKAGE MIRROR:"; then
+        pkg_mirror=$(echo "$l" | sed 's/^PACKAGE MIRROR: *//')
+      fi
+      if [ -z "$pkg_location" ] && echo "$l" | grep -q "^PACKAGE LOCATION:"; then
+        pkg_location=$(echo "$l" | sed 's/^PACKAGE LOCATION: *//')
+      fi
+    done < $pkg_info
+    rm $pkg_info
+    if [ -z "$pkg_mirror" ]; then
+      if echo $pkg_location | grep -q '^\./salix'; then
+        pkg_mirror="$MIRROR"/$arch/$release/
+      else
+        pkg_mirror="$MIRROR"/$arch/$slackfolder-$release/
+      fi
+    fi
+    if [ -n "$pkg_name" ]; then
+      pkg_url=${pkg_mirror}${pkg_location}/${pkg_name}
+      echo "[$i/$n] $pkg_name"
+      ( cd $cache && wget -nv $pkg_url )
+    fi
+  done
+  echo "Download complete."; echo
+}
+
+installpkg() {
+  ipkg_root=/
+  while [ -n "$1" ]; do
+    case "$1" in
+      -root) ipkg_root="$2"; shift 2 ;;
+      *) ipkg_pkg="$1"; shift; break ;;
+    esac
+  done
+  [ -f "$ipkg_pkg" ] || return 1
+  mkdir -p $ipkg_root
+  (
+    cd $ipkg_root
+    tmp=$cache/install.log
+    ipkg_shortname=$(basename "$ipkg_pkg" $(echo "$ipkg_pkg" | sed 's/.*\(\.t[glbx]z\)$/\1/'))
+    ipkg_basename=$(echo "$ipkg_shortname" | sed 's/\(.*\)-[^-]\+-[^-]\+-[^-]\+/\1/')
+    ipkg_compressed="$(du -sh "$(readlink -f $ipkg_pkg)" | cut -f 1)"
+    tar xvif $ipkg_pkg > $tmp
+    ipkg_log="$ipkg_root/var/log"
+    for PKGDBDIR in packages removed_packages removed_scripts scripts setup ; do
+      if [ ! -d $ipkg_log/$PKGDBDIR ]; then
+        rm -rf $ipkg_log/$PKGDBDIR # make sure it's not a symlink or something stupid
+        mkdir -p $ipkg_log/$PKGDBDIR
+        chmod 755 $ipkg_log/$PKGDBDIR 
+      fi
+    done
+    echo "PACKAGE NAME:     $ipkg_shortname" > $ipkg_log/packages/$ipkg_shortname
+    echo "COMPRESSED PACKAGE SIZE:     $ipkg_compressed" >> $ipkg_log/packages/$ipkg_shortname
+    echo "UNCOMPRESSED PACKAGE SIZE:     not-computed" >> $ipkg_log/packages/$ipkg_shortname
+    echo "PACKAGE LOCATION: $ipkg_pkg" >> $ipkg_log/packages/$ipkg_shortname
+    echo "PACKAGE DESCRIPTION:" >> $ipkg_log/packages/$ipkg_shortname
+    if [ -e install/slack-desc ]; then
+      grep "^$ipkg_basename:" install/slack-desc >> $ipkg_log/packages/$ipkg_shortname
+    fi
+    echo "FILE LIST:" >> $ipkg_log/packages/$ipkg_shortname
+    if [ "$(cat $tmp | grep '^\./' | wc -l | tr -d ' ')" = "1" ]; then
+      cat $tmp >> $ipkg_log/packages/$ipkg_shortname
+    else
+      echo './' >> $ipkg_log/packages/$ipkg_shortname
+      cat $tmp >> $ipkg_log/packages/$ipkg_shortname
+    fi
+    rm -f $tmp
+    [ -x /sbin/ldconfig ] && /sbin/ldconfig
+    if [ -f install/doinst.sh ]; then
+      sh install/doinst.sh -install || true
+      cp install/doinst.sh $ipkg_log/scripts/$ipkg_shortname
+      chmod 755 $ipkg_log/scripts/$ipkg_shortname
+    fi
+    [ -e install ] && rm -rf install
+  )
+}
+
+install_salix() {
+  mkdir -p /var/lock/subsys/
+  (
+    flock -n -x 200
+    if [ $? -ne 0 ]; then
+      echo "Cache repository is busy." >&2
+      return 1
+    fi
+    download_salix
+    echo "Installing packages from $cache into $rootfs_path..."
+    if [ -e "$rootfs_path"/slackware-version ]; then
+      echo "cleaning up existing $rootfs_path..."
+      rm -rf "$rootfs_path"
+    fi
+    mkdir -p $rootfs_path
+    # installing pkgs
+    for package in $cache/*.t?z ; do
+      echo "* Installing $(basename $package | sed 's/\(.*\)\.t[gblx]z$/\1/')..."
+      installpkg -root $rootfs_path $package
+    done
+    return 0
+  ) 200>/var/lock/subsys/lxc
+  return $?
+}
+
+configure_salix() {
+  echo "Configuring..." ; echo
+  # the next part contains excerpts taken from SeTconfig (written by
+  # Patrick Volkerding) from the slackware setup disk.
+  # but before pasting them just set a variable to use them as they are
+  T_PX=$rootfs_path
+  ( cd $T_PX ; chmod 755 ./ )
+  ( cd $T_PX ; chmod 755 ./var )
+  if [ -d $T_PX/usr/src/linux ]; then
+    chmod 755 $T_PX/usr/src/linux
+  fi
+  if [ ! -d $T_PX/proc ]; then
+    mkdir $T_PX/proc
+    chown root.root $T_PX/proc
+  fi
+  if [ ! -d $T_PX/sys ]; then
+    mkdir $T_PX/sys
+    chown root.root $T_PX/sys
+  fi
+  chmod 1777 $T_PX/tmp
+  if [ ! -d $T_PX/var/spool/mail ]; then
+    mkdir -p $T_PX/var/spool/mail
+    chmod 755 $T_PX/var/spool
+    chown root.mail $T_PX/var/spool/mail
+    chmod 1777 $T_PX/var/spool/mail
+  fi
+  echo "#!/bin/sh" > $T_PX/etc/rc.d/rc.keymap
+  echo "# Load the keyboard map.  More maps are in /usr/share/kbd/keymaps." >> $T_PX/etc/rc.d/rc.keymap
+  echo "if [ -x /usr/bin/loadkeys ]; then" >> $T_PX/etc/rc.d/rc.keymap
+  echo "  /usr/bin/loadkeys us" >> $T_PX/etc/rc.d/rc.keymap
+  echo "fi" >> $T_PX/etc/rc.d/rc.keymap
+  chmod 755 $T_PX/etc/rc.d/rc.keymap
+  # network configuration is left to the user
+  # editing /etc/rc.d/rc.inet1.conf and /etc/resolv.conf of the container
+  # just set the hostname
+  echo "${UTSNAME}" > $rootfs_path/etc/HOSTNAME
+  cp $rootfs_path/etc/HOSTNAME $rootfs_path/etc/hostname
+  # make needed devices, from Chris Willing's MAKEDEV.sh
+  # http://www.vislab.uq.edu.au/howto/lxc/MAKEDEV.sh
+  DEV=$rootfs_path/dev
+  # cleanup & creat the few devices needed by the container
+  rm -rf ${DEV} 
+  mkdir ${DEV}
+  mkdir -m 755 ${DEV}/pts
+  mkdir -m 1777 ${DEV}/shm
+  mknod -m 666 ${DEV}/null c 1 3
+  mknod -m 666 ${DEV}/zero c 1 5
+  mknod -m 666 ${DEV}/random c 1 8
+  mknod -m 666 ${DEV}/urandom c 1 9
+  mknod -m 666 ${DEV}/tty c 5 0
+  mknod -m 600 ${DEV}/console c 5 1
+  mknod -m 666 ${DEV}/tty0 c 4 0
+  mknod -m 666 ${DEV}/tty1 c 4 1
+  mknod -m 666 ${DEV}/tty2 c 4 2
+  mknod -m 666 ${DEV}/tty3 c 4 3
+  mknod -m 666 ${DEV}/tty4 c 4 4
+  mknod -m 666 ${DEV}/tty5 c 4 5
+  mknod -m 666 ${DEV}/full c 1 7
+  mknod -m 600 ${DEV}/initctl p
+  mknod -m 660 ${DEV}/loop0 b 7 0
+  mknod -m 660 ${DEV}/loop1 b 7 1
+  ln -s pts/ptmx ${DEV}/ptmx
+  cp $config_path/fstab $rootfs_path/etc/fstab
+  # disable pointless services in a container
+  chmod -x $rootfs_path/etc/rc.d/rc.acpid
+  chmod -x $rootfs_path/etc/rc.d/rc.inet1 # normally not needed with bridge
+  chmod -x $rootfs_path/etc/rc.d/rc.keymap
+  chmod -x $rootfs_path/etc/rc.d/rc.ntpd
+  chmod -x $rootfs_path/etc/rc.d/rc.pcmcia
+  chmod -x $rootfs_path/etc/rc.d/rc.sshd
+  chmod -x $rootfs_path/etc/rc.d/rc.udev
+  # simplify rc.6 and rc.S, http://www.vislab.uq.edu.au/howto/lxc/create_container.html
+  # and some other small fixes for a clean boot
+  touch $rootfs_path/.container
+  sed -i '
+/# Try to mount \/proc:/i \
+if [ ! -e /.container ]; then
+; /# Done checking root filesystem/a \
+fi # end container check
+; /# Remounting the \/ partition will initialize the new \/etc\/mtab:/i \
+if [ ! -e /.container ]; then
+; /\/sbin\/mount -w -o remount \//a \
+fi # end container check
+; /# Fix \/etc\/mtab to list sys and proc/i \
+if [ ! -e /.container ]; then
+; /# Add entry for \/ to \/etc\/mtab:/i \
+if [ ! -e /.container ]; then
+; /# Clean up some temporary files:/i \
+fi # end container check
+; /# Run serial port setup script:/i \
+if [ ! -e /.container ]; then
+; /# Carry an entropy pool/i \
+fi # end container check
+    ' $rootfs_path/etc/rc.d/rc.S
+  sed -i '
+/# Save the system time to the hardware clock/i \
+if [ ! -e /.container ]; then
+; /# Run any local shutdown scripts:/ i\
+fi # end container check
+; /# Turn off swap:/i \
+if [ ! -e /.container ]; then
+; /# This never hurts:/i \
+fi # end container check
+; /# Close any volumes opened by cryptsetup:/i \
+if [ ! -e /.container ]; then
+; $i \
+else \
+  # confirm successful shutdown \
+  echo; echo -e "${BOLDYELLOW}Container stopped.${COLOR_RESET}"; echo \
+fi # end container check
+    ' $rootfs_path/etc/rc.d/rc.6
+  sed -i '
+/# Screen blanks/i \
+if [ ! -e /.container ]; then
+; /# Set the permissions on \/var\/log\/dmesg/i \
+fi # end container check
+    ' $rootfs_path/etc/rc.d/rc.M
+  sed -i '
+/# If the interface isn.t in the kernel yet/i \
+if [ ! -e /.container ]; then
+; /then # interface exists/i \
+fi # end container check
+    ' $rootfs_path/etc/rc.d/rc.inet1
+  echo "lxc container" >>  $rootfs_path/etc/motd
+  # reduce the number of local consoles: two should be enough
+  sed -i '/^c3\|^c4\|^c5\|^c6/s/^/# /' $rootfs_path/etc/inittab
+  # create another way to command init in the container, using a socket /var/run/telinit.sock
+  cat <<'EOF' > $rootfs_path/usr/sbin/telinitlxc
+#!/bin/sh
+rm -f /var/run/telinit.sock
+mkfifo /var/run/telinit.sock
+exec 10< /var/run/telinit.sock
+while true; do
+  sleep 3
+  read l <&10
+  if [ -n "$l" ]; then
+    echo telinit $l > /var/log/telinit-lxc.log
+    rm /var/run/telinit.sock
+    telinit $l
+    break
+  fi
+done
+EOF
+  chmod +x $rootfs_path/usr/sbin/telinitlxc
+  echo 'lxc:12345:respawn:/usr/sbin/telinitlxc' >> $rootfs_path/etc/inittab
+  # set the default runlevel to 3
+  sed -i 's/id:4:initdefault:/id:3:initdefault:/' $rootfs_path/etc/inittab 
+  # fix some broken links
+  if [ $arch == "x86_64" ]; then
+    LIBDIRSUFFIX="64"
+  else
+    LIBDIRSUFFIX=""
+  fi
+  ( 
+    cd $rootfs_path/usr/lib${LIBDIRSUFFIX}
+    [ -e libcrypto.so.0 ] || ln -s libcrypto.so libcryto.so.0
+    [ -e libssl.so.0 ] || ln -s libssl.so libssl.so.0
+  )
+  # add a message to rc.local that confirms successful container startup
+  echo "if [ -e /.container ]; then echo; echo \"* container $name started. *\"; echo; fi" >> $rootfs_path/etc/rc.d/rc.local
+  # set a default combination for the luggage
+  echo "root:$root_password" | chroot $rootfs_path chpasswd
+  echo "Root password is '$root_password', please change it!"
+  return 0
+}
+
+clean() {
+  [ -e $cache ] || exit 0
+  # lock, so we won't purge while someone is creating a repository
+  (
+    flock -n -x 200
+    if [ $? != 0 ]; then
+      echo "Cache repository is busy." >&2
+      exit 1
+    fi
+    echo -n "Purging the download cache..."
+    rm --preserve-root --one-file-system -rf $cache && echo "Done." || exit 1
+    exit 0
+  ) 200>/var/lock/subsys/lxc
+}
+
+usage() {
+  cat <<EOF
+usage:
+    $1 -n|--name=<container_name>
+        [-p|--path=<path>] [-c|--clean] [-R|--release=<Salix_release>]
+        [-h|--help]
+Mandatory args:
+  -n,--name         container name, used to as an identifier for that container from now on
+Optional args:
+  -p,--path         path to where the container rootfs will be created, defaults to /var/lib/lxc. The container config will go under /var/lib/lxc in that case
+  -c,--clean        clean the cache
+  -A,--arch         Architecture. i486, arm or x86_64. Default is $default_arch
+  -R,--release      Salix release for the new container. Default is $default_release
+  -h,--help         print this help
+EOF
+}
+
+set -e
+
+options=$(getopt -o hp:n:cA:R: -l help,path:,name:,clean,arch:,release: -- "$@")
+if [ $? -ne 0 ]; then
+  usage $(basename "$0")
+  exit 1
+fi
+eval set -- "$options"
+
+while true; do
+  case "$1" in
+    -h|--help)      usage $0 && exit 0;;
+    -p|--path)      path=$2; shift 2;;
+    -n|--name)      name=$2; shift 2;;
+    -c|--clean)     clean=$2; shift 2;;
+    -A|--arch)      arch=$2; shift 2;;
+    -R|--release)   release=$2; shift 2;;
+    --)             shift 1; break ;;
+    *)              break ;;
+  esac
+done
+
+if [ ! -z "$clean" -a -z "$path" ]; then
+  clean || exit 1
+  exit 0
+fi
+
+if [ -z "$path" ]; then
+  echo "'path' parameter is required." >&2
+  exit 1
+fi
+
+if [ "$(id -u)" != "0" ]; then
+  echo "This script should be run as 'root'." >&2
+  exit 1
+fi
+
+if [ -z "$name" ]; then
+  # no name given? set a default one
+  name=salix-$release-$arch
+fi
+[ -z "$arch" ] && arch=$default_arch
+[ -z "$release" ] && release=$default_release
+cache_base=${cache_base:-/var/cache/lxc/salix}
+rootfs_path=$path/rootfs
+config_path=$default_path/$name
+cache=$cache_base/$arch/$release
+
+revert() {
+  echo "Interrupted, so cleaning up" >&2
+  #lxc-destroy -n $name
+  # maybe was interrupted before copy config
+  #rm -rf $path/$name
+  #rm -rf $default_path/$name
+  echo "exiting..." >&2
+  exit 1
+}
+trap revert SIGHUP SIGINT SIGTERM
+
+copy_configuration
+if [ $? -ne 0 ]; then
+  echo "failed write configuration file" >&2
+  exit 1
+fi
+
+install_salix
+if [ $? -ne 0 ]; then
+  echo "Failed to install Salix" >&2
+  exit 1
+fi
+
+configure_salix
+if [ $? -ne 0 ]; then
+  echo "Failed to configure Salix for a container" >&2
+  exit 1
+fi
+
+if [ -n "$clean" ]; then
+  clean || exit 1
+  exit 0
+fi
+
+echo "Salix $release ($arch) container installed"
+echo "Container rootfs and config created"
+echo "Default root password is $root_password"
