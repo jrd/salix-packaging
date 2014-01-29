@@ -1,0 +1,301 @@
+#!/bin/sh
+# vim: et sw=2 ts=2 tw=0:
+
+__copyright__="Cyrille Pontvieux <jrd@enialis.net>"
+__license__="GPLv2+"
+__version__="1.0"
+
+usage() {
+  cat <<EOF
+Usage: salixPackaging [OPTIONS]
+Help a packager to manage his/her packages for Salix.
+
+Where OPTIONS are:
+  -h, --help This usage
+  -V, --version Show the version
+  --check Sanity check of Host environment.
+  --install=VERSION,ARCH Install a LXC version of Salix for the specified VERSION and ARCH. ARCH could be 'i486' or 'x86_64'.
+  --list-installed List all LXC Salix version installed.
+  --remove=VERSION,ARCH Remove a LXC Salix version.
+  --register Register your information as packager.
+  -c, --create Create a new package.
+  -e, --edit=PACKAGE_NAME,VERSION,ARCH Edit a PACKAGE_NAME SLKBUILD file for Salix VERSION and ARCH. ARCH could also be 'noarch'.
+  -l, --pkg-list Show all packages and their state.
+  -p, --pkg-info=PACKAGE_NAME,VERSION Show some information about the PACKAGE_NAME for the Salix VERSION.
+  -v, --verify=PACKAGE_NAME,VERSION Verify the latest stable version of the PACKAGE_NAME for the Salix VERSION.
+  -a, --verify-all Verify the latest stable version on all packages. Will take some time.
+  -b, --build=PACKAGE_NAME,VERSION,ARCH Schedule to build PACKAGE_NAME for Salix version VERSION and ARCH..
+  -q, --queue Show the schedule queue.
+  -r, --rsync Rsync the local repo to your remote one.
+  -t, --ticket=PACKAGE_NAME,VERSION Create a ticket on Salix Tracker about PACKAGE_NAME and Salix VERSION for all built ARCH.
+  -i, --interactive Will enter an interactive mode if used with -l, -p, -v, -q. Creating a package (-c), editing a package (-e), and creating a ticket (-t) are always interactive.
+EOF
+}
+
+show_version() {
+  cat <<EOF
+salixPackaging v.$__version__
+Copyright $__copyright__
+License $__license__
+EOF
+}
+
+usage_ver_arch() {
+  cat <<EOF
+LXC should be filled in the form:
+  version,arch
+Where 'version' could be '14.0', '14.1' for example
+And 'arch' could be 'i486' or 'x86_64'.
+EOF
+}
+
+usage_pkg_ver() {
+  cat <<EOF
+Package should be filled in the form:
+  package_name,version
+Where 'version' could be '14.0', '14.1' for example.
+EOF
+}
+
+usage_pkg_ver_arch() {
+  cat <<EOF
+Package should be filled in the form:
+  package_name,version,arch
+Where 'version' could be '14.0', '14.1' for example
+And 'arch' could be 'i486', 'x86_64' or 'noarch'.
+EOF
+}
+
+action_check() {
+  echo check
+  return 0
+}
+
+action_install() {
+  ver=$1
+  arch=$2
+  echo install, ver=$ver, arch=$arch
+  return 0
+}
+
+action_listinstalled() {
+  echo listinstalled
+  return 0
+}
+
+action_remove() {
+  ver=$1
+  arch=$2
+  echo remove, ver=$ver, arch=$arch
+  return 0
+}
+
+action_register() {
+  echo register
+  return 0
+}
+
+action_create() {
+  echo create
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_edit() {
+  pkgname=$1
+  ver=$2
+  arch=$3
+  echo edit, pkgname=$pkgname, ver=$ver, arch=$arch
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_pkglist() {
+  echo pkglist
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_verify() {
+  pkgname=$1
+  ver=$2
+  echo verify, pkgname=$pkgname, ver=$ver
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_verifyall() {
+  echo verifyall
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_build() {
+  pkgname=$1
+  ver=$2
+  arch=$3
+  echo build, pkgname=$pkgname, ver=$ver, arch=$arch
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_queue() {
+  echo queue
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_rsync() {
+  echo rsync
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_ticket() {
+  pkgname=$1
+  ver=$2
+  echo ticket, pkgname=$pkgname, ver=$ver
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+opts=$(getopt -o 'hVce:lp:v:ab:qrt:i' -l 'help,version,check,install:,list-installed,remove:,register,create,edit:,pkg-list,pkg-info:,verify:,verify-all,build:,queue,rsync,ticket:,interactive' -- "$@")
+ret=$?
+if [ $ret -eq 1 ]; then
+  usage
+  exit $ret
+else
+  eval set -- $opts
+  INTERACTIVE=0
+  ACTION=''
+  PARAM1=''
+  PARAM2=''
+  PARAM3=''
+  while [ -n "$1" -a "$1" != "--" ]; do
+    case "$1" in
+      -h|--help)
+        shift
+        usage
+        exit 0
+        ;;
+      -V|--version)
+        shift
+        show_version
+        exit 0
+        ;;
+      --check)
+        shift
+        ACTION=check
+        ;;
+      --install)
+        shift
+        ACTION=install
+        verarch=$1
+        shift
+        echo "$verarch" | grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
+        PARAM1=$(echo $verarch|cut -d, -f1)
+        PARAM2=$(echo $verarch|cut -d, -f2)
+        ;;
+      --list-installed)
+        shift
+        ACTION=listinstalled
+        ;;
+      --remove)
+        shift
+        ACTION=remove
+        verarch=$1
+        shift
+        echo "$verarch" | grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
+        PARAM1=$(echo $verarch|cut -d, -f1)
+        PARAM2=$(echo $verarch|cut -d, -f2)
+        ;;
+      --register)
+        shift
+        ACTION=register
+        ;;
+      -c|--create)
+        shift
+        ACTION=create
+        INTERACTIVE=1
+        ;;
+      -e|--edit)
+        shift
+        ACTION=edit
+        INTERACTIVE=1
+        fullpkg=$1
+        shift
+        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
+        PARAM1=$(echo $fullpkg|cut -d, -f1)
+        PARAM2=$(echo $fullpkg|cut -d, -f2)
+        PARAM3=$(echo $fullpkg|cut -d, -f3)
+        ;;
+      -l|--pkg-list)
+        shift
+        ACTION=pkglist
+        ;;
+      -p|--pkg-info)
+        shift
+        ACTION=pkginfo
+        fullpkg=$1
+        shift
+        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        PARAM1=$(echo $fullpkg|cut -d, -f1)
+        PARAM2=$(echo $fullpkg|cut -d, -f2)
+        ;;
+      -v|--verify)
+        shift
+        ACTION=verify
+        fullpkg=$1
+        shift
+        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        PARAM1=$(echo $fullpkg|cut -d, -f1)
+        PARAM2=$(echo $fullpkg|cut -d, -f2)
+        ;;
+      -a|--verify-all)
+        shift
+        ACTION=verifyall
+        ;;
+      -b|--build)
+        shift
+        ACTION=build
+        fullpkg=$1
+        shift
+        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
+        PARAM1=$(echo $fullpkg|cut -d, -f1)
+        PARAM2=$(echo $fullpkg|cut -d, -f2)
+        PARAM3=$(echo $fullpkg|cut -d, -f3)
+        ;;
+      -q|--queue)
+        shift
+        ACTION=queue
+        ;;
+      -r|--rsync)
+        shift
+        ACTION=rsync
+        ;;
+      -t|--ticket)
+        shift
+        ACTION=ticket
+        INTERACTIVE=1
+        fullpkg=$1
+        shift
+        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        PARAM1=$(echo $fullpkg|cut -d, -f1)
+        PARAM2=$(echo $fullpkg|cut -d, -f2)
+        ;;
+      -i|--interactive)
+        shift
+        INTERACTIVE=1
+        ;;
+      *)
+        echo "Unknown option $1" >&2
+        exit 1
+    esac
+  done
+  if [ -z "$ACTION" ]; then
+    usage
+    exit 1
+  else
+    action_$ACTION $PARAM1 $PARAM2 $PARAM3
+  fi
+fi

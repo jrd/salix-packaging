@@ -1,0 +1,31 @@
+Packaging
+=========
+
+1. Env installation
+  1. LXC
+  2. extra packages
+  3. Web Server/CGI or Dialog ?
+2. Fill your information
+  1. Name
+  2. 2-LETTERS abbrev
+  3. upload location
+  4. upload schema
+3. Create a new package
+  1. package name
+  2. home page
+  3. download page
+  4. choose a method to determine the latest stable version
+  5. accept or force a version
+  6. choose a download url schema
+  7. choose "noarch" or "archdep"
+  8. choose a SLKBUILD schema
+  9. determine deps and build deps
+  10. write build process
+  11. write package process
+4. Check for new version
+5. Go the home page or download page
+6. Schedule a package to be built in a container (version, arch)
+7. Show queue
+8. Show result
+9. Post resource on Tracker
+
