@@ -215,6 +215,10 @@ installpkg() {
     rm -f $tmp
     [ -x /sbin/ldconfig ] && /sbin/ldconfig
     if [ -f install/doinst.sh ]; then
+      # sanity regarding passwd that could be called outside chroot.
+      if grep -q '^\(usr/bin/\)\?passwd ' install/doinst.sh; then
+        sed -ri 's,^(usr/bin/)?passwd .*,chroot . \0,' install/doinst.sh
+      fi
       sh install/doinst.sh -install || true
       cp install/doinst.sh $ipkg_log/scripts/$ipkg_shortname
       chmod 755 $ipkg_log/scripts/$ipkg_shortname
@@ -239,8 +243,11 @@ install_salix() {
     fi
     mkdir -p $rootfs_path
     # installing pkgs
+    n=$(ls $cache/*.t?z|wc -l)
+    i=0
     for package in $cache/*.t?z ; do
-      echo "* Installing $(basename $package | sed 's/\(.*\)\.t[gblx]z$/\1/')..."
+      i=$(($i + 1))
+      echo "* [$i/$n] Installing $(basename $package | sed 's/\(.*\)\.t[gblx]z$/\1/')..."
       installpkg -root $rootfs_path $package
     done
     return 0
@@ -288,7 +295,7 @@ configure_salix() {
   # make needed devices, from Chris Willing's MAKEDEV.sh
   # http://www.vislab.uq.edu.au/howto/lxc/MAKEDEV.sh
   DEV=$rootfs_path/dev
-  # cleanup & creat the few devices needed by the container
+  # cleanup & create the few devices needed by the container
   rm -rf ${DEV} 
   mkdir ${DEV}
   mkdir -m 755 ${DEV}/pts
@@ -409,7 +416,7 @@ EOF
   # add a message to rc.local that confirms successful container startup
   echo "if [ -e /.container ]; then echo; echo \"* container $name started. *\"; echo; fi" >> $rootfs_path/etc/rc.d/rc.local
   # set a default combination for the luggage
-  echo "root:$root_password" | chroot $rootfs_path chpasswd
+  echo "root:$root_password" | chroot $rootfs_path /usr/sbin/chpasswd
   echo "Root password is '$root_password', please change it!"
   return 0
 }

@@ -5,6 +5,13 @@ __copyright__="Cyrille Pontvieux <jrd@enialis.net>"
 __license__="GPLv2+"
 __version__="1.0"
 
+cd $(dirname "$0")
+# encusre /sbin and /usr/sbin are in the PATH (in case of a sudo)
+PATH=/sbin:/usr/sbin:$PATH
+export PATH
+  
+CFG_FILE=~/.config/salixPackaging
+
 usage() {
   cat <<EOF
 Usage: salixPackaging [OPTIONS]
@@ -14,6 +21,7 @@ Where OPTIONS are:
   -h, --help This usage
   -V, --version Show the version
   --check Sanity check of Host environment.
+  --prepare Prepare the host to install LXC versions of Salix.
   --install=VERSION,ARCH Install a LXC version of Salix for the specified VERSION and ARCH. ARCH could be 'i486' or 'x86_64'.
   --list-installed List all LXC Salix version installed.
   --remove=VERSION,ARCH Remove a LXC Salix version.
@@ -66,33 +74,182 @@ And 'arch' could be 'i486', 'x86_64' or 'noarch'.
 EOF
 }
 
+check_root() {
+  if [ $(id -u) -ne 0 ]; then
+    echo "You should run this action with root privileges." >&2
+    exit 1
+  fi
+}
+
 action_check() {
-  echo check
+  ok="[32;1mOK[0m"
+  fail="[31;1mFail[0m"
+  if lxc-checkconfig; then
+    echo "LXC: $ok"
+  else
+    echo "LXC: $fail"
+    return 1
+  fi
+  echo -n "Arch: "
+  if [ $(uname -m) = x86_64 ]; then
+    echo "$ok"
+  else
+    echo "$fail"
+    echo "You're not running a 64bits OS, you will not be able to build x86_64 package." >&2
+    echo "Please, run a Salix 64bits to make packages." >&2
+    return 1
+  fi
+  echo -n "rc.local: "
+  if grep -q lxcbr0 /etc/rc.d/rc.local; then
+    echo "$ok"
+  else
+    echo "$fail"
+    echo "rc.local seems not to contain the needed preparation for LXC Bridge." >&2
+    echo "Please, launch the prepare action." >&2
+    return 1
+  fi
+  echo -n "Bridge: "
+  if ifconfig|grep -q 'lxcbr0:'; then
+    echo "$ok"
+  else
+    echo "$fail"
+    echo "lxcbr0 bridge interface seems not to be configured." >&2
+    echo "Please, run /etc/rc.d/rc.local to install it." >&2
+    return 1
+  fi
   return 0
+}
+
+action_prepare() {
+  check_root
+  cat <<'EOF' >> /etc/rc.d/rc.local
+# salixPackaging
+brctl addbr lxcbr0
+brctl setfd lxcbr0 0
+networkBase=192.168.100
+ifconfig lxcbr0 $networkBase.1 netmask 255.255.255.0 promisc up
+extIface=$(ifconfig|grep -B1 'inet '|sed -nr '/^[^:]+:/ { s/^([^:]+):.*/\1/; h }; $ {g;p}')
+iptables -t nat -A POSTROUTING -s $networkBase.0/24 -o $extIface -j MASQUERADE
+echo 1 > /proc/sys/net/ipv4/ip_forward
+EOF
+  cat <<'EOF' >> /etc/rc.d/rc.local_shutdown
+# salixPackaging
+ifconfig lxcbr0 down
+brctl delbr lxcbr0
+EOF
+  brctl addbr lxcbr0
+  brctl setfd lxcbr0 0
+  networkBase=192.168.100
+  ifconfig lxcbr0 $networkBase.1 netmask 255.255.255.0 promisc up
+  extIface=$(ifconfig|grep -B1 'inet '|sed -nr '/^[^:]+:/ { s/^([^:]+):.*/\1/; h }; $ {g;p}')
+  iptables -t nat -A POSTROUTING -s $networkBase.0/24 -o $extIface -j MASQUERADE
+  echo 1 > /proc/sys/net/ipv4/ip_forward
 }
 
 action_install() {
   ver=$1
   arch=$2
-  echo install, ver=$ver, arch=$arch
-  return 0
+  check_root
+  echo "Creating LXC Salix $ver - $arch"
+  # find next number for IP and Mac address
+  n=$(lxc-ls|grep '^salixpkg-'|wc -l)
+  # host start at 1, so next add +1
+  NUMIP=$(($n + 1))
+  NUMMAC=$(/bin/echo -e "obase=16\n$n + 1"|bc) # hexa
+  conf=$(mktemp)
+  sed -r "s/@NUMIP@/$NUMIP/; s/@NUMMAC@/$NUMMAC/;" lxc-default.conf > $conf
+  if lxc-create -n salixpkg-$ver-$arch -f $conf -t $PWD/lxc-salix; then
+    rm $conf
+    if lxc-start -d -n salixpkg-$ver-$arch; then
+      echo "LXC started."
+      return 0
+    else
+      echo "Cannot start the LXC." >&2
+      return 1
+    fi
+  else
+    rm $conf
+    echo "Cannot create the LXC." >&2
+    return 1
+  fi
 }
 
 action_listinstalled() {
-  echo listinstalled
-  return 0
+  lxc-ls|grep '^salixpkg-'
+  return $?
 }
 
 action_remove() {
   ver=$1
   arch=$2
-  echo remove, ver=$ver, arch=$arch
-  return 0
+  check_root
+  echo "Removing LXC Salix $ver - $arch"
+  lxc-destroy -n salixpkg-$ver-$arch
+  return $?
 }
 
 action_register() {
-  echo register
+  cat <<EOF
+Packager Information
+====================
+
+Please give some information about yourself and about your remote repository.
+If you don't have a remote repository to hold your packages, please send an
+email to the ML http://lists.sourceforge.net/lists/listinfo/salix-main in
+order to have a space at people.salixos.org.
+If you never already made some packages for Salix, take a look here:
+http://docs.salixos.org/wiki/Packaging_rules
+
+Hit Ctrl+C to abort.
+
+EOF
+  read -p "Name: " name
+  read -p "Email: " email
+  defabbrev=$(for n in $(echo "$name"|tr '-' ' '); do echo -n "$n"|sed -r 's/^(.).*/\1/'|tr A-Z a-z; done)
+  read -p "Package abbreviation [$defabbrev]: " abbrev
+  [ -z "$abbrev" ] && abbrev=$defabbrev
+  defurl=http://people.salixos.org/$abbrev
+  read -p "Remote URL [$defurl]: " url
+  [ -z "$url" ] && url=$defurl
+  defscpuri=simplynux.net:www/$abbrev
+  read -p "SCP URI for Rsync [$defscpuri]: " scpuri
+  [ -z "$scpuri" ] && scpuri=$defscpuri
+  defschema=/\$pkgname/\$pkgver-\\\$arch/
+  read -p "Schema location [$defschema]: " schema
+  [ -z "$schema" ] && schema=$defschema
+  check_url $url || return 1
+  check_scp_uri $scpuri || return 1
+  cat <<EOF > $CFG_FILE
+name=$name
+email=$email
+abbrev=$abbrev
+url=$url
+scpuri=$scpuri
+schema=$schema
+EOF
   return 0
+}
+
+check_url() {
+  url="$1"
+  if ! wget -O /dev/null -q "$url"; then
+    echo "$url is not valid" >&2
+    false
+  fi
+}
+
+check_scp_uri() {
+  scpuri="$1"
+  tmp=$(mktemp -d)
+  if echo sshfs "$scpuri" $tmp; then # FIXME
+    echo fusermount -u $tmp # FIXME
+    rmdir $tmp
+    true
+  else
+    rmdir $tmp
+    echo "$scpuri is not valid" >&2
+    false
+  fi
 }
 
 action_create() {
@@ -159,7 +316,7 @@ action_ticket() {
   return 0
 }
 
-opts=$(getopt -o 'hVce:lp:v:ab:qrt:i' -l 'help,version,check,install:,list-installed,remove:,register,create,edit:,pkg-list,pkg-info:,verify:,verify-all,build:,queue,rsync,ticket:,interactive' -- "$@")
+opts=$(getopt -o 'hVce:lp:v:ab:qrt:i' -l 'help,version,check,prepare,install:,list-installed,remove:,register,create,edit:,pkg-list,pkg-info:,verify:,verify-all,build:,queue,rsync,ticket:,interactive' -- "$@")
 ret=$?
 if [ $ret -eq 1 ]; then
   usage
@@ -187,12 +344,16 @@ else
         shift
         ACTION=check
         ;;
+      --prepare)
+        shift
+        ACTION=prepare
+        ;;
       --install)
         shift
         ACTION=install
         verarch=$1
         shift
-        echo "$verarch" | grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
+        echo "$verarch"|grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
         PARAM1=$(echo $verarch|cut -d, -f1)
         PARAM2=$(echo $verarch|cut -d, -f2)
         ;;
@@ -205,7 +366,7 @@ else
         ACTION=remove
         verarch=$1
         shift
-        echo "$verarch" | grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
+        echo "$verarch"|grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
         PARAM1=$(echo $verarch|cut -d, -f1)
         PARAM2=$(echo $verarch|cut -d, -f2)
         ;;
@@ -224,7 +385,7 @@ else
         INTERACTIVE=1
         fullpkg=$1
         shift
-        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
+        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         PARAM3=$(echo $fullpkg|cut -d, -f3)
@@ -238,7 +399,7 @@ else
         ACTION=pkginfo
         fullpkg=$1
         shift
-        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         ;;
@@ -247,7 +408,7 @@ else
         ACTION=verify
         fullpkg=$1
         shift
-        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         ;;
@@ -260,7 +421,7 @@ else
         ACTION=build
         fullpkg=$1
         shift
-        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
+        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         PARAM3=$(echo $fullpkg|cut -d, -f3)
@@ -279,7 +440,7 @@ else
         INTERACTIVE=1
         fullpkg=$1
         shift
-        echo "$fullpkg" | grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         ;;
