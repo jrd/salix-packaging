@@ -152,7 +152,7 @@ action_install() {
   check_root
   echo "Creating LXC Salix $ver - $arch"
   # find next number for IP and Mac address
-  n=$(lxc-ls|grep '^salixpkg-'|wc -l)
+  n=$(lxc-ls -1|grep '^salixpkg-'|wc -l)
   # host start at 1, so next add +1
   NUMIP=$(($n + 1))
   NUMMAC=$(/bin/echo -e "obase=16\n$n + 1"|bc) # hexa
@@ -175,7 +175,7 @@ action_install() {
 }
 
 action_listinstalled() {
-  lxc-ls|grep '^salixpkg-'
+  lxc-ls -1|grep '^salixpkg-'
   return $?
 }
 
@@ -253,8 +253,8 @@ check_scp_uri() {
 }
 
 action_create() {
+  echo FIXME
   echo create
-  echo INTERACTIVE=$INTERACTIVE
   return 0
 }
 
@@ -262,13 +262,23 @@ action_edit() {
   pkgname=$1
   ver=$2
   arch=$3
+  echo FIXME
   echo edit, pkgname=$pkgname, ver=$ver, arch=$arch
-  echo INTERACTIVE=$INTERACTIVE
   return 0
 }
 
 action_pkglist() {
+  echo FIXME
   echo pkglist
+  echo INTERACTIVE=$INTERACTIVE
+  return 0
+}
+
+action_pkginfo() {
+  pkgname=$1
+  ver=$2
+  echo FIXME
+  echo pkginfo, pkgname=$pkgname, ver=$ver
   echo INTERACTIVE=$INTERACTIVE
   return 0
 }
@@ -276,12 +286,14 @@ action_pkglist() {
 action_verify() {
   pkgname=$1
   ver=$2
+  echo FIXME
   echo verify, pkgname=$pkgname, ver=$ver
   echo INTERACTIVE=$INTERACTIVE
   return 0
 }
 
 action_verifyall() {
+  echo FIXME
   echo verifyall
   echo INTERACTIVE=$INTERACTIVE
   return 0
@@ -291,28 +303,29 @@ action_build() {
   pkgname=$1
   ver=$2
   arch=$3
+  echo FIXME
   echo build, pkgname=$pkgname, ver=$ver, arch=$arch
-  echo INTERACTIVE=$INTERACTIVE
   return 0
 }
 
 action_queue() {
+  echo FIXME
   echo queue
   echo INTERACTIVE=$INTERACTIVE
   return 0
 }
 
 action_rsync() {
+  echo FIXME
   echo rsync
-  echo INTERACTIVE=$INTERACTIVE
   return 0
 }
 
 action_ticket() {
   pkgname=$1
   ver=$2
+  echo FIXME
   echo ticket, pkgname=$pkgname, ver=$ver
-  echo INTERACTIVE=$INTERACTIVE
   return 0
 }
 
