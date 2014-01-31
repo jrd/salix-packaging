@@ -10,33 +10,65 @@ cd $(dirname "$0")
 PATH=/sbin:/usr/sbin:$PATH
 export PATH
   
-CFG_FILE=~/.config/salixPackaging
+CFG_FILE=/etc/salixPackaging
+
+CNONE="[0m"
+CRED="[31m"; CLRED="[31;1m"
+CGREEN="[32m"; CLGREEN="[32;1m"
+CMAROON="[33m"; CYELLOW="[33;1m"
+CBLUE="[34m"; CLBLUE="[34;1m"
+CMAGENTA="[35m"; CLMAGENTA="[35;1m"
+CCYAN="[36m"; CLCYAN="[36;1m"
+CGREY="[37m"; CLGREY="[37;1m"
+CWHITE="[38m"; CLWHITE="[38;1m"
 
 usage() {
+  needroot="$CLRED*$CNONE"
   cat <<EOF
 Usage: salixPackaging [OPTIONS]
 Help a packager to manage his/her packages for Salix.
 
 Where OPTIONS are:
-  -h, --help This usage
-  -V, --version Show the version
-  --check Sanity check of Host environment.
-  --prepare Prepare the host to install LXC versions of Salix.
-  --install=VERSION,ARCH Install a LXC version of Salix for the specified VERSION and ARCH. ARCH could be 'i486' or 'x86_64'.
-  --list-installed List all LXC Salix version installed.
-  --remove=VERSION,ARCH Remove a LXC Salix version.
-  --register Register your information as packager.
-  -c, --create Create a new package.
-  -e, --edit=PACKAGE_NAME,VERSION,ARCH Edit a PACKAGE_NAME SLKBUILD file for Salix VERSION and ARCH. ARCH could also be 'noarch'.
-  -l, --pkg-list Show all packages and their state.
-  -p, --pkg-info=PACKAGE_NAME,VERSION Show some information about the PACKAGE_NAME for the Salix VERSION.
-  -v, --verify=PACKAGE_NAME,VERSION Verify the latest stable version of the PACKAGE_NAME for the Salix VERSION.
-  -a, --verify-all Verify the latest stable version on all packages. Will take some time.
-  -b, --build=PACKAGE_NAME,VERSION,ARCH Schedule to build PACKAGE_NAME for Salix version VERSION and ARCH..
-  -q, --queue Show the schedule queue.
-  -r, --rsync Rsync the local repo to your remote one.
-  -t, --ticket=PACKAGE_NAME,VERSION Create a ticket on Salix Tracker about PACKAGE_NAME and Salix VERSION for all built ARCH.
-  -i, --interactive Will enter an interactive mode if used with -l, -p, -v, -q. Creating a package (-c), editing a package (-e), and creating a ticket (-t) are always interactive.
+  -h, --help
+    This usage
+  -V, --version
+    Show the version
+  --check
+    Sanity check of Host environment.
+  --prepare $needroot
+    Prepare the host to install LXC versions of Salix.
+  --register
+    Register your information as packager.
+  --install=VERSION,ARCH $needroot
+    Install a LXC version of Salix for the specified VERSION and ARCH. ARCH could be 'i486' or 'x86_64'.
+  --list-installed
+    List all LXC Salix version installed.
+  --remove=VERSION,ARCH $needroot
+    Remove a LXC Salix version.
+  -c, --create
+    Create a new package.
+  -e, --edit=PACKAGE_NAME,VERSION,ARCH
+    Edit a PACKAGE_NAME SLKBUILD file for Salix VERSION and ARCH. ARCH could also be 'noarch'.
+  -l, --pkg-list
+    Show all packages and their state.
+  -p, --pkg-info=PACKAGE_NAME,VERSION
+    Show some information about the PACKAGE_NAME for the Salix VERSION.
+  -v, --verify=PACKAGE_NAME,VERSION
+    Verify the latest stable version of the PACKAGE_NAME for the Salix VERSION.
+  -a, --verify-all
+    Verify the latest stable version on all packages. Will take some time.
+  -b, --build=PACKAGE_NAME,VERSION,ARCH
+    Schedule to build PACKAGE_NAME for Salix version VERSION and ARCH..
+  -q, --queue
+    Show the schedule queue.
+  -r, --rsync
+    Rsync the local repo to your remote one.
+  -t, --ticket=PACKAGE_NAME,VERSION
+    Create a ticket on Salix Tracker about PACKAGE_NAME and Salix VERSION for all built ARCH.
+  -i, --interactive
+    Will enter an interactive mode if used with -l, -p, -v, -q. Creating a package (-c), editing a package (-e), and creating a ticket (-t) are always interactive.
+
+  $needroot: root privileges required.
 EOF
 }
 
@@ -82,8 +114,8 @@ check_root() {
 }
 
 action_check() {
-  ok="[32;1mOK[0m"
-  fail="[31;1mFail[0m"
+  ok="${CLGREEN}OK$CNONE"
+  fail="${CLRED}Fail$CNONE"
   if lxc-checkconfig; then
     echo "LXC: $ok"
   else
@@ -144,48 +176,88 @@ EOF
   extIface=$(ifconfig|grep -B1 'inet '|sed -nr '/^[^:]+:/ { s/^([^:]+):.*/\1/; h }; $ {g;p}')
   iptables -t nat -A POSTROUTING -s $networkBase.0/24 -o $extIface -j MASQUERADE
   echo 1 > /proc/sys/net/ipv4/ip_forward
+  touch $CFG_FILE
+  chmod a+rw $CFG_FILE
+  echo "Bridge interface ${CLGREEN}lxcbr0$CNONE configured. Using IP ${CLGREEN}$networkBase.1$CNONE."
 }
 
-action_install() {
-  ver=$1
-  arch=$2
-  check_root
-  echo "Creating LXC Salix $ver - $arch"
-  # find next number for IP and Mac address
-  n=$(lxc-ls -1|grep '^salixpkg-'|wc -l)
-  # host start at 1, so next add +1
-  NUMIP=$(($n + 1))
-  NUMMAC=$(/bin/echo -e "obase=16\n$n + 1"|bc) # hexa
-  conf=$(mktemp)
-  sed -r "s/@NUMIP@/$NUMIP/; s/@NUMMAC@/$NUMMAC/;" lxc-default.conf > $conf
-  if lxc-create -n salixpkg-$ver-$arch -f $conf -t $PWD/lxc-salix; then
-    rm $conf
-    if lxc-start -d -n salixpkg-$ver-$arch; then
-      echo "LXC started."
-      return 0
-    else
-      echo "Cannot start the LXC." >&2
-      return 1
-    fi
+notnull() {
+  [ -n "$1" ]
+}
+READ_VALUE=
+# Prompt for a value, using an optional default value
+# $1 = prompt
+# $2 = default value
+# $3 = command to check for validity, takes a value as argument. 'notnull' is accepted as special value
+# The value is put in the global READ_VALUE variable
+# exit with error on ctrl+c
+read_info() {
+  prompt="$1"
+  def="$2"
+  check="$3"
+  [ -z "$check" ] && check=true
+  value=
+  [ -n "$def" ] && prompt="$prompt [$def]: " || prompt="$prompt: "
+  valid=false
+  trap 'echo;echo "Interrupted";break' 2 # will break on ctrl+c
+  while ! $valid; do
+    printf "$prompt"
+    read -r value # hopes the -r is portable enough
+    [ -n "$def" ] && [ -z "$value" ] && value="$def"
+    $check "$value" && valid=true
+  done
+  trap 2 # restore normal behavior
+  if $valid; then
+    READ_VALUE=$value
+    return 0
   else
-    rm $conf
-    echo "Cannot create the LXC." >&2
+    READ_VALUE=
     return 1
   fi
 }
-
-action_listinstalled() {
-  lxc-ls -1|grep '^salixpkg-'
-  return $?
-}
-
-action_remove() {
-  ver=$1
-  arch=$2
-  check_root
-  echo "Removing LXC Salix $ver - $arch"
-  lxc-destroy -n salixpkg-$ver-$arch
-  return $?
+# Will ask for a choice between possibilities.
+# case insensitive (A-Z only)
+# $1 = prompt
+# $2 = choices, separated by spaces in lowercase
+# $3 = default value
+# The chosen value is put in the global READ_VALUE variable
+# exit with error on ctrl+c
+read_choice() {
+  prompt="$1"
+  choices="$2"
+  def="$3"
+  value=
+  prompt="$prompt ["
+  first=true
+  for c in $choices; do
+    $first || prompt="${prompt}/"
+    first=false
+    [ "$c" = "$def" ] && c=$(echo "$c"|tr a-z A-Z)
+    prompt="${prompt}${c}"
+  done
+  prompt="$prompt]? "
+  valid=false
+  trap 'echo;echo "Interrupted";break' 2 # will break on ctrl+c
+  while ! $valid; do
+    printf "$prompt"
+    read -r value # hopes the -r is portable enough
+    value=$(echo "$value"|tr A-Z a-z)
+    [ -n "$def" ] && [ -z "$value" ] && value="$def"
+    for c in $choices; do
+      if [ "$value" = "$c" ]; then
+        valid=true
+        break
+      fi
+    done
+  done
+  trap 2 # restore normal behavior
+  if $valid; then
+    READ_VALUE=$value
+    return 0
+  else
+    READ_VALUE=
+    return 1
+  fi
 }
 
 action_register() {
@@ -203,36 +275,35 @@ http://docs.salixos.org/wiki/Packaging_rules
 Hit Ctrl+C to abort.
 
 EOF
-  read -p "Name: " name
-  read -p "Email: " email
-  defabbrev=$(for n in $(echo "$name"|tr '-' ' '); do echo -n "$n"|sed -r 's/^(.).*/\1/'|tr A-Z a-z; done)
-  read -p "Package abbreviation [$defabbrev]: " abbrev
-  [ -z "$abbrev" ] && abbrev=$defabbrev
-  defurl=http://people.salixos.org/$abbrev
-  read -p "Remote URL [$defurl]: " url
-  [ -z "$url" ] && url=$defurl
-  defscpuri=simplynux.net:www/$abbrev
-  read -p "SCP URI for Rsync [$defscpuri]: " scpuri
-  [ -z "$scpuri" ] && scpuri=$defscpuri
-  defschema=/\$pkgname/\$pkgver-\\\$arch/
-  read -p "Schema location [$defschema]: " schema
-  [ -z "$schema" ] && schema=$defschema
-  check_url $url || return 1
-  check_scp_uri $scpuri || return 1
+  read_info 'Name' '' notnull || return 1
+  name="$READ_VALUE"
+  read_info 'Email' '' notnull || return 1
+  email="$READ_VALUE"
+  abbrev=$(for n in $(echo "$name"|tr '-' ' '); do echo -n "$n"|sed -r 's/^(.).*/\1/'|tr A-Z a-z; done)
+  read_info 'Package abbreviation' "$abbrev" || return 1
+  abbrev="$READ_VALUE"
+  read_info 'Remote URL' "http://people.salixos.org/$USER" check_url || return 1
+  url="$READ_VALUE"
+  read_info 'SCP URI for Rsync' "simplynux.net:www" check_scp_uri || return 1
+  scpuri="$READ_VALUE"
+  read_info 'Schema location' '$pkgname/$pkgver-$arch' notnull || return 1
+  schema="$READ_VALUE"
   cat <<EOF > $CFG_FILE
-name=$name
-email=$email
-abbrev=$abbrev
-url=$url
-scpuri=$scpuri
-schema=$schema
+pkgr_name=$name
+pkgr_email=$email
+pkgr_abbrev=$abbrev
+pkgr_url=$url
+pkgr_scpuri=$scpuri
+pkgr_schema=$schema
+pkgr_user=$USER
+pkgr_uid=$(id -u)
 EOF
   return 0
 }
 
 check_url() {
   url="$1"
-  if ! wget -O /dev/null -q "$url"; then
+  if ! wget --no-check-certificate -O /dev/null -q "$url"; then
     echo "$url is not valid" >&2
     false
   fi
@@ -241,8 +312,11 @@ check_url() {
 check_scp_uri() {
   scpuri="$1"
   tmp=$(mktemp -d)
-  if echo sshfs "$scpuri" $tmp; then # FIXME
-    echo fusermount -u $tmp # FIXME
+  if sshfs -o uid=$(id -u) -o gid=$(id -g) "$scpuri" $tmp; then
+    echo "Connection ok, disconnecting..."
+    sleep 3
+    fusermount -u $tmp
+    sleep 1
     rmdir $tmp
     true
   else
@@ -252,10 +326,156 @@ check_scp_uri() {
   fi
 }
 
+check_registered() {
+  if [ ! -r $CFG_FILE ]; then
+    echo "You should first register as a packager." >&2
+    exit 1
+  fi
+}
+
+action_install() {
+  ver=$1
+  arch=$2
+  check_root
+  check_registered
+  echo "Creating LXC Salix $ver - $arch"
+  # find next number for IP and Mac address
+  n=$(lxc-ls -1|grep '^salixpkg-'|wc -l)
+  # host start at 1, so next add +1
+  NUMIP=$(($n + 1))
+  NUMMAC=$(/bin/echo -e "obase=16\n$n + 1"|bc) # hexa
+  conf=$(mktemp)
+  sed -r "s/@NUMIP@/$NUMIP/; s/@NUMMAC@/$NUMMAC/;" lxc-default.conf > $conf
+  name=salixpkg-$ver-$arch
+  if lxc-create -n $name -f $conf -t $PWD/lxc-salix; then
+    rm $conf
+    . $CFG_FILE
+    echo "pkg::$pkgr_uid:users:::/bin/bash"|/usr/sbin/newusers -R /var/lib/lxc/$name/rootfs
+    /usr/sbin/usermod -R /var/lib/lxc/$name/rootfs -a -G lp,wheel,floppy,audio,video,cdrom,plugdev,power,netdev,scanner pkg
+    if lxc-start -d -n $name; then
+      echo "LXC started."
+      return 0
+    else
+      echo "Cannot start the LXC." >&2
+      return 1
+    fi
+  else
+    rm $conf
+    echo "Cannot create the LXC." >&2
+    return 1
+  fi
+}
+
+action_listinstalled() {
+  lxc-ls -1|sort|sed -rn '/^salixpkg-/{s/^salixpkg-([^-]+)-(.*)/ - \1, \2/;p}'
+  return $?
+}
+
+action_remove() {
+  ver=$1
+  arch=$2
+  check_root
+  echo "Removing LXC Salix $ver - $arch"
+  lxc-destroy -n salixpkg-$ver-$arch
+  return $?
+}
+
 action_create() {
-  echo FIXME
-  echo create
-  return 0
+  cat <<EOF
+Package creation
+================
+
+EOF
+  read_info 'Package name' '' notnull || return 1
+  pkg_name="$READ_VALUE"
+  read_info 'Home page' '' check_url || return 1
+  pkg_url="$READ_VALUE"
+  read_info 'Download URL page' '' check_url || return 1
+  pkg_dl_url="$READ_VALUE"
+  read_choice "Latest version check schema\n" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad custom md5sum' 'sf_latest' || return 1
+  pkg_check_schema="$READ_VALUE"
+  case $pkg_check_schema in
+    sf_latest)
+      pkg_check_pattern='grep -A1 "/files/latest/download"|sed -rn '\''/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\\1,;p}'\'
+      ;;
+    sf_folders)
+      pkg_check_pattern='grep -B1 "Click to enter "|sed -rn '\''/href/{s,.*/([^/]+)/".*,\\1,;p}'\''|sort -rV'
+      ;;
+    sf_files)
+      pkg_check_pattern='grep "Click to download "|sed -r '\''s,.*download .+-([^-]+)\.tar\.[bgx]z2?\".*,\\1,'\''|sort -rV'
+      ;;
+    github)
+      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+      ;;
+    apacheindex)
+      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+      ;;
+    nginxindex)
+      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+      ;;
+    googlecode)
+      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+      ;;
+    launchpad)
+      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+      ;;
+    custom)
+      echo "A custom pattern is a filter on the HTML download page"
+      echo "in order to find the latest stable version."
+      echo "Example for a sourceforge project named 'mysoft':"
+      echo "  grep 'FIXME'|sed -r 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -r -V|head -n 1"
+      read_info 'Custom pattern' '' notnull || return 1
+      pkg_check_pattern="$READ_VALUE"
+      ;;
+    md5sum)
+      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+  esac
+  printf "Latest stable version found: "
+  find_latest_version "$pkg_dl_url" "$pkg_check_pattern"
+  printf "Latest version found: "
+  find_latest_version "$pkg_dl_url" "$pkg_check_pattern" "" false
+  read_choice "Is this ok? Continue" "y n" "y"
+  if [ $READ_VALUE = y ]; then
+    echo $pkg_name
+    echo $pkg_url
+    echo $pkg_dl_url
+    echo $pkg_check_schema
+    echo $pkg_check_pattern
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Find the latest version
+# Returns the version or "up to date" or "changed"
+# $1 = URL to check
+# $2 = pattern for the URL
+# $3 = referenced md5sum
+# $4 = from stable versions only (true, by default) or from all versions (false)
+find_latest_version() {
+  url="$1"
+  pat="$2"
+  md5ref="$3"
+  stable="$4"
+  [ -z "$stable" ] && stable=true
+  filter=$(mktemp) # better than using eval I think.
+  echo '#!/bin/sh' > $filter
+  printf "$pat" >> $filter
+  $stable && printf "|grep -vi 'alpha\\|beta\\|m[0-9]\\|rc'" >> $filter
+  chmod +x $filter
+  ver=$(wget --no-check-certificate -q -O - "$url"|$filter|head -n1)
+  rm $filter
+  if echo "$ver"|grep -q '^MD5:'; then
+    md5=$(echo "$ver"|sed 's/MD5://')
+    if [ "$md5" = "$md5ref" ]; then
+      echo "up to date"
+    else
+      echo "changed"
+    fi
+  else
+    echo "$ver"
+  fi
 }
 
 action_edit() {
@@ -361,6 +581,10 @@ else
         shift
         ACTION=prepare
         ;;
+      --register)
+        shift
+        ACTION=register
+        ;;
       --install)
         shift
         ACTION=install
@@ -382,10 +606,6 @@ else
         echo "$verarch"|grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
         PARAM1=$(echo $verarch|cut -d, -f1)
         PARAM2=$(echo $verarch|cut -d, -f2)
-        ;;
-      --register)
-        shift
-        ACTION=register
         ;;
       -c|--create)
         shift
