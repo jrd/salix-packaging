@@ -388,11 +388,13 @@ Package creation
 EOF
   read_info 'Package name' '' notnull || return 1
   pkg_name="$READ_VALUE"
+  read_choice 'Package architectures' 'all noarch arm i486 x86_64' 'all'
+  pkg_arch="$READ_VALUE"
   read_info 'Home page' '' check_url || return 1
   pkg_url="$READ_VALUE"
   read_info 'Download URL page' '' check_url || return 1
   pkg_dl_url="$READ_VALUE"
-  read_choice "Latest version check schema\n" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad custom md5sum' 'sf_latest' || return 1
+  read_choice "Latest version check schema.\nChoose from" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad custom md5sum' 'sf_latest' || return 1
   pkg_check_schema="$READ_VALUE"
   case $pkg_check_schema in
     sf_latest)
@@ -431,16 +433,14 @@ EOF
       pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
   esac
   printf "Latest stable version found: "
-  find_latest_version "$pkg_dl_url" "$pkg_check_pattern"
+  pkg_stable=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern")
+  echo $pkg_stable
   printf "Latest version found: "
   find_latest_version "$pkg_dl_url" "$pkg_check_pattern" "" false
   read_choice "Is this ok? Continue" "y n" "y"
   if [ $READ_VALUE = y ]; then
-    echo $pkg_name
-    echo $pkg_url
-    echo $pkg_dl_url
-    echo $pkg_check_schema
-    echo $pkg_check_pattern
+    pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|md5sum|sed 's/  -//')
+    store_package_info "$pkg_name" "$pkg_arch" "$pkg_url" "$pkg_dl_url" "$pkg_check_schema" "$pkg_check_pattern" "$pkg_md5" "$pkg_stable"
     return 0
   else
     return 1
@@ -476,6 +476,29 @@ find_latest_version() {
   else
     echo "$ver"
   fi
+}
+
+store_package_info() {
+  pkg_name="$1"
+  pkg_arch="$2"
+  pkg_url="$3"
+  pkg_dl_url="$4"
+  pkg_check_schema="$5"
+  pkg_check_pattern="$6"
+  pkg_md5="$7"
+  pkg_ver="$8"
+  mkdir -p src/$pkg_name
+  (
+    cd src/$pkg_name
+    echo "$pkg_arch" > arch
+    echo "$pkg_url" > url
+    echo "$pkg_dl_url" > dlurl
+    echo "$pkg_check_schema" > schema
+    echo "$pkg_check_pattern" > pattern
+    echo "$pkg_md5" > md5sum
+    echo "$pkg_ver" > version
+  )
+  echo "Information for package ${CGREEN}${pkg_name}$CNONE has been stored."
 }
 
 action_edit() {
