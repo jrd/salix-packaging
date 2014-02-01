@@ -439,8 +439,12 @@ clean() {
 usage() {
   cat <<EOF
 usage:
-    $1 -n|--name=<container_name>
-        [-p|--path=<path>] [-c|--clean] [-R|--release=<Salix_release>]
+    $1
+        -n|--name=<container_name>
+        [-p|--path=<path>]
+        [-c|--clean]
+        [-A|--arch=<arch>]
+        [-R|--release=<Salix_release>]
         [-h|--help]
 Mandatory args:
   -n,--name         container name, used to as an identifier for that container from now on

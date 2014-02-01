@@ -1,0 +1,26 @@
+# vim: syn=sh et sw=2 sts=2 ts=2 tw=0:
+#Packager: @PNAME@ <@PEMAIL@>
+
+pkgname=@NAME@
+pkgver=@VER@
+pkgrel=@RLZ@@PTAG@
+@ARCHVAR@
+source=(@DLURL@/$pkgname-${pkgver}.tar.xz) # FIXME
+sourcetemplate=@PURL@/@PSCHEMA@/
+docs=("readme" "install" "copying" "changelog" "authors" "news" "todo")
+url=@URL@
+#options=('noextract' 'nosrcpack' 'nostrip' 'noautodotnew')
+
+#doinst() {
+#
+#}
+
+slackdesc=\
+(
+#|-----handy-ruler------------------------------------------------------|
+"$pkgname (FIXME)"
+"FIXME"
+)
+
+build() {
+}

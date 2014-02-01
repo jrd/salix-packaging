@@ -1,0 +1,8 @@
+  cd $SRC/$pkgname-$pkgver || return 1
+  perl Makefile.PL || return 1
+  make -j $numjobs OPTIMIZE="$CFLAGS" || return 1
+  make install INSTALLDIRS=vendor DESTDIR=$PKG || return 1
+  # Remove perllocal.pod and .packlist if present in the package
+  ( for f in perllocal.pod .packlist; do
+    find $PKG -name "$f" -exec rm -rf {} \;
+  done ) || return 1

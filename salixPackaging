@@ -1,5 +1,5 @@
 #!/bin/sh
-# vim: et sw=2 ts=2 tw=0:
+# vim: et sw=2 sts=2 ts=2 tw=0:
 
 __copyright__="Cyrille Pontvieux <jrd@enialis.net>"
 __license__="GPLv2+"
@@ -47,8 +47,10 @@ Where OPTIONS are:
     Remove a LXC Salix version.
   -c, --create
     Create a new package.
-  -e, --edit=PACKAGE_NAME,VERSION,ARCH
-    Edit a PACKAGE_NAME SLKBUILD file for Salix VERSION and ARCH. ARCH could also be 'noarch'.
+  -u, --update=PACKAGE_NAME,VERSION
+    Update an already existing package for the Salix VERSION.
+  -e, --edit=PACKAGE_NAME,VERSION
+    Edit a PACKAGE_NAME SLKBUILD file for Salix VERSION.
   -l, --pkg-list
     Show all packages and their state.
   -p, --pkg-info=PACKAGE_NAME,VERSION
@@ -230,7 +232,7 @@ read_choice() {
   prompt="$prompt ["
   first=true
   for c in $choices; do
-    $first || prompt="${prompt}/"
+    $first || prompt="${prompt},"
     first=false
     [ "$c" = "$def" ] && c=$(echo "$c"|tr a-z A-Z)
     prompt="${prompt}${c}"
@@ -279,9 +281,9 @@ EOF
   name="$READ_VALUE"
   read_info 'Email' '' notnull || return 1
   email="$READ_VALUE"
-  abbrev=$(for n in $(echo "$name"|tr '-' ' '); do echo -n "$n"|sed -r 's/^(.).*/\1/'|tr A-Z a-z; done)
-  read_info 'Package abbreviation' "$abbrev" || return 1
-  abbrev="$READ_VALUE"
+  tag=$(for n in $(echo "$name"|tr '-' ' '); do echo -n "$n"|sed -r 's/^(.).*/\1/'|tr A-Z a-z; done)
+  read_info 'Package tag' "$tag" || return 1
+  tag="$READ_VALUE"
   read_info 'Remote URL' "http://people.salixos.org/$USER" check_url || return 1
   url="$READ_VALUE"
   read_info 'SCP URI for Rsync' "simplynux.net:www" check_scp_uri || return 1
@@ -289,13 +291,13 @@ EOF
   read_info 'Schema location' '$pkgname/$pkgver-$arch' notnull || return 1
   schema="$READ_VALUE"
   cat <<EOF > $CFG_FILE
-pkgr_name=$name
-pkgr_email=$email
-pkgr_abbrev=$abbrev
-pkgr_url=$url
-pkgr_scpuri=$scpuri
-pkgr_schema=$schema
-pkgr_user=$USER
+pkgr_name="$name"
+pkgr_email="$email"
+pkgr_tag=$tag
+pkgr_url='$url'
+pkgr_scpuri='$scpuri'
+pkgr_schema='$schema'
+pkgr_user='$USER'
 pkgr_uid=$(id -u)
 EOF
   return 0
@@ -340,14 +342,14 @@ action_install() {
   check_registered
   echo "Creating LXC Salix $ver - $arch"
   # find next number for IP and Mac address
-  n=$(lxc-ls -1|grep '^salixpkg-'|wc -l)
+  n=$(find_installed_salix|wc -l)
   # host start at 1, so next add +1
   NUMIP=$(($n + 1))
   NUMMAC=$(/bin/echo -e "obase=16\n$n + 1"|bc) # hexa
   conf=$(mktemp)
   sed -r "s/@NUMIP@/$NUMIP/; s/@NUMMAC@/$NUMMAC/;" lxc-default.conf > $conf
   name=salixpkg-$ver-$arch
-  if lxc-create -n $name -f $conf -t $PWD/lxc-salix; then
+  if lxc-create -n $name -f $conf -t $PWD/lxc-salix -- --arch=$arch --release=$ver; then
     rm $conf
     . $CFG_FILE
     echo "pkg::$pkgr_uid:users:::/bin/bash"|/usr/sbin/newusers -R /var/lib/lxc/$name/rootfs
@@ -366,8 +368,12 @@ action_install() {
   fi
 }
 
+find_installed_salix() {
+  lxc-ls -1|sed -rn '/^salixpkg-/{s/^salixpkg-//;p}'|sort
+}
+
 action_listinstalled() {
-  lxc-ls -1|sort|sed -rn '/^salixpkg-/{s/^salixpkg-([^-]+)-(.*)/ - \1, \2/;p}'
+  find_installed_salix|sed -r 's/^([^-]+)-(.*)/ - \1, \2/'
   return $?
 }
 
@@ -380,7 +386,16 @@ action_remove() {
   return $?
 }
 
+check_numlxc() {
+  if [ $(find_installed_salix|wc -l) -eq 0 ]; then
+    echo "You should first install a Salix LXC version." >&2
+    exit 1
+  fi
+}
+
 action_create() {
+  check_registered
+  check_numlxc
   cat <<EOF
 Package creation
 ================
@@ -388,63 +403,96 @@ Package creation
 EOF
   read_info 'Package name' '' notnull || return 1
   pkg_name="$READ_VALUE"
-  read_choice 'Package architectures' 'all noarch arm i486 x86_64' 'all'
-  pkg_arch="$READ_VALUE"
-  read_info 'Home page' '' check_url || return 1
-  pkg_url="$READ_VALUE"
-  read_info 'Download URL page' '' check_url || return 1
-  pkg_dl_url="$READ_VALUE"
-  read_choice "Latest version check schema.\nChoose from" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad custom md5sum' 'sf_latest' || return 1
-  pkg_check_schema="$READ_VALUE"
-  case $pkg_check_schema in
-    sf_latest)
-      pkg_check_pattern='grep -A1 "/files/latest/download"|sed -rn '\''/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\\1,;p}'\'
-      ;;
-    sf_folders)
-      pkg_check_pattern='grep -B1 "Click to enter "|sed -rn '\''/href/{s,.*/([^/]+)/".*,\\1,;p}'\''|sort -rV'
-      ;;
-    sf_files)
-      pkg_check_pattern='grep "Click to download "|sed -r '\''s,.*download .+-([^-]+)\.tar\.[bgx]z2?\".*,\\1,'\''|sort -rV'
-      ;;
-    github)
-      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-      ;;
-    apacheindex)
-      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-      ;;
-    nginxindex)
-      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-      ;;
-    googlecode)
-      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-      ;;
-    launchpad)
-      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-      ;;
-    custom)
-      echo "A custom pattern is a filter on the HTML download page"
-      echo "in order to find the latest stable version."
-      echo "Example for a sourceforge project named 'mysoft':"
-      echo "  grep 'FIXME'|sed -r 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -r -V|head -n 1"
-      read_info 'Custom pattern' '' notnull || return 1
-      pkg_check_pattern="$READ_VALUE"
-      ;;
-    md5sum)
-      pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-  esac
-  printf "Latest stable version found: "
-  pkg_stable=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern")
-  echo $pkg_stable
-  printf "Latest version found: "
-  find_latest_version "$pkg_dl_url" "$pkg_check_pattern" "" false
-  read_choice "Is this ok? Continue" "y n" "y"
-  if [ $READ_VALUE = y ]; then
-    pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|md5sum|sed 's/  -//')
-    store_package_info "$pkg_name" "$pkg_arch" "$pkg_url" "$pkg_dl_url" "$pkg_check_schema" "$pkg_check_pattern" "$pkg_md5" "$pkg_stable"
-    return 0
+  if [ -e src/$pkg_name ]; then
+    # Package already exists so we must just ask to create it for missing LXC Salix version
+    already=''
+    new=''
+    for salix_ver in $(find_installed_salix|cut -d- -f1|sort -u); do
+      if [ -e src/$pkg_name/$salix_ver ]; then
+        already="$already $salix_ver"
+      else
+        new="$new $salix_ver"
+      fi
+    done
+    already=$(echo "$already"|sed 's/^ *//; s/ *$//;') # trim
+    new=$(echo "$new"|sed 's/^ *//; s/ *$//;') # trim
+    if [ -z "$new" ]; then
+      echo "Package already exists and no new Salix version found" >&2
+      return 1
+    else
+      salix_ver_ref=$(echo "$already"|tr ' ' '\n'|sort -r|head -n1)
+      echo "Package found in Salix version $salix_ver_ref."
+      echo "Install it into $new."
+      pkg_ver=$(cat src/$pkg_name/version)
+      for salix_ver in $new; do
+        copy_package_build "$pkg_name" "$pkg_ver" "$salix_ver_ref" "$salix_ver"
+      done
+      echo "Done."
+    fi
   else
-    return 1
+    read_choice 'Package architectures' 'all noarch arm i486 x86_64' 'all'
+    pkg_arch="$READ_VALUE"
+    read_info 'Home page' '' check_url || return 1
+    pkg_url="$READ_VALUE"
+    read_info 'Download URL page' '' check_url || return 1
+    pkg_dl_url="$READ_VALUE"
+    read_choice "Latest version check schema.\nChoose from" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad custom md5sum' 'sf_latest' || return 1
+    pkg_check_schema="$READ_VALUE"
+    case $pkg_check_schema in
+      sf_latest)
+        pkg_check_pattern='grep -A1 "/files/latest/download"|sed -rn '\''/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\\1,;p}'\'
+        ;;
+      sf_folders)
+        pkg_check_pattern='grep -B1 "Click to enter "|sed -rn '\''/href/{s,.*/([^/]+)/".*,\\1,;p}'\''|sort -rV'
+        ;;
+      sf_files)
+        pkg_check_pattern='grep "Click to download "|sed -r '\''s,.*download .+-([^-]+)\.tar\.[bgx]z2?\".*,\\1,'\''|sort -rV'
+        ;;
+      github)
+        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+        ;;
+      apacheindex)
+        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+        ;;
+      nginxindex)
+        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+        ;;
+      googlecode)
+        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+        ;;
+      launchpad)
+        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+        ;;
+      custom)
+        echo "A custom pattern is a filter on the HTML download page"
+        echo "in order to find the latest stable version."
+        echo "Example for a sourceforge project named 'mysoft':"
+        echo "  grep 'FIXME'|sed -r 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -r -V|head -n 1"
+        read_info 'Custom pattern' '' notnull || return 1
+        pkg_check_pattern="$READ_VALUE"
+        ;;
+      md5sum)
+        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+    esac
+    printf "Latest stable version found: "
+    pkg_ver=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern")
+    echo $pkg_ver
+    read_choice "Use this version" "y n" "y" || return 1
+    if [ $READ_VALUE = n ]; then
+      read_info "Then, which specific version" "$pkg_ver" notnull || return 1
+      pkg_ver="$READ_VALUE"
+      pkg_fixver=true
+    else
+      pkg_fixver=false
+    fi
+    pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|md5sum|sed 's/  -//')
+    read_choice "Build schema" 'configure perl python waf' 'configure' || return 1
+    pkg_build_schema="$READ_VALUE"
+    for salix_ver in $(find_installed_salix|cut -d- -f1|sort -u); do
+      store_package_info "$salix_ver" "$pkg_name" "$pkg_arch" "$pkg_url" "$pkg_dl_url" "$pkg_check_schema" "$pkg_check_pattern" "$pkg_md5" "$pkg_ver" "$pkg_fixver" "$pkg_build_schema"
+    done
   fi
+  return 0
 }
 
 # Find the latest version
@@ -479,14 +527,17 @@ find_latest_version() {
 }
 
 store_package_info() {
-  pkg_name="$1"
-  pkg_arch="$2"
-  pkg_url="$3"
-  pkg_dl_url="$4"
-  pkg_check_schema="$5"
-  pkg_check_pattern="$6"
-  pkg_md5="$7"
-  pkg_ver="$8"
+  salix_ver="$1"; shift
+  pkg_name="$1"; shift
+  pkg_arch="$1"; shift
+  pkg_url="$1"; shift
+  pkg_dl_url="$1"; shift
+  pkg_check_schema="$1"; shift
+  pkg_check_pattern="$1"; shift
+  pkg_md5="$1"; shift
+  pkg_ver="$1"; shift
+  pkg_fixver="$1"; shift
+  pkg_build_schema="$1"; shift
   mkdir -p src/$pkg_name
   (
     cd src/$pkg_name
@@ -497,16 +548,60 @@ store_package_info() {
     echo "$pkg_check_pattern" > pattern
     echo "$pkg_md5" > md5sum
     echo "$pkg_ver" > version
+    echo "$pkg_fixver" > fixversion
+    echo "$pkg_build_schema" > buildschema
   )
-  echo "Information for package ${CGREEN}${pkg_name}$CNONE has been stored."
+  store_package_build "$pkg_name" "$pkg_ver" "$salix_ver"
+  echo "Information for package ${CGREEN}${pkg_name}$CNONE has been stored for $salix_ver."
+}
+
+store_package_build() {
+  pkg_name="$1"
+  pkg_ver="$2"
+  salix_ver="$3"
+  . $CFG_FILE
+  pkg_arch=$(cat src/$pkg_name/arch)
+  pkg_url=$(cat src/$pkg_name/url)
+  pkg_dl_url=$(cat src/$pkg_name/dlurl)
+  pkg_build_schema=$(cat src/$pkg_name/buildschema)
+  pkgr_email_dot=$(echo "$pkgr_email"|sed -r 's/\./~dot~/g; s/@/~at~/g;')
+  arch_var=''
+  if [ $pkg_arch != all ]; then
+    arch_var="arch=$pkg_arch"
+  fi
+  pkgr_schema_archprotected=$(echo "$pkgr_schema"|sed -r 's/\$arch/\\$arch/g;')
+  pkgr_schema_protected=$(echo "$pkgr_schema_archprotected"|sed -r 's/\\/\\\\/g;')
+  mkdir -p src/$pkg_name/$salix_ver/$pkg_ver
+  cat <<EOF|sed -f - templates/SLKBUILD > src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD
+  s/@PNAME@/$pkgr_name/;
+  s/@PEMAIL@/$pkgr_email_dot/;
+  s/@NAME@/$pkg_name/;
+  s/@VER@/$pkg_ver/;
+  s/@RLZ@/1/;
+  s/@PTAG@/$pkgr_tag/;
+  s/@ARCHVAR@/$arch_var/;
+  s,@DLURL@,$pkg_dl_url,;
+  s,@PURL@,$pkgr_url,;
+  s,@PSCHEMA@,$pkgr_schema_protected,;
+  s,@URL@,$pkg_url,;
+  /^build()/ rtemplates/build/$pkg_build_schema
+EOF
+}
+
+copy_package_build() {
+  pkg_name="$1"
+  pkg_ver="$2"
+  salix_ver="$3"
+  salix_newver="$4"
+  mkdir -p src/$pkg_name/$salix_newver/$pkg_ver
+  cp src/$pkg_name/$salix_ver/$pkg_ver/* src/$pkg_name/$salix_newver/$pkg_ver/
 }
 
 action_edit() {
   pkgname=$1
   ver=$2
-  arch=$3
   echo FIXME
-  echo edit, pkgname=$pkgname, ver=$ver, arch=$arch
+  echo edit, pkgname=$pkgname, ver=$ver
   return 0
 }
 
@@ -641,10 +736,9 @@ else
         INTERACTIVE=1
         fullpkg=$1
         shift
-        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
+        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
-        PARAM3=$(echo $fullpkg|cut -d, -f3)
         ;;
       -l|--pkg-list)
         shift

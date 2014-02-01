@@ -1,0 +1,9 @@
+  cd $SRC/$pkgname-$pkgver || return 1
+  ./configure \
+  --prefix=/usr \
+  --libdir=/usr/lib${LIBDIRSUFFIX} \
+  --localstatedir=/var \
+  --sysconfdir=/etc \
+  --build=$arch-slackware-linux || return 1
+  make -j $numjobs || return 1
+  make install DESTDIR=$PKG || return 1

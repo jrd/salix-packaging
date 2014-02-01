@@ -1,0 +1,4 @@
+  cd $SRC/$pkgname-$pkgver || return 1
+  ./waf configure --prefix=/usr --libdir=/usr/lib${LIBDIRSUFFIX} --localstatedir=/var --sysconfdir=/etc || return 1
+  ./waf build -j $numjobs || return 1
+  ./waf install --destdir=$PKG || return 1
