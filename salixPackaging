@@ -11,8 +11,11 @@ PATH=/sbin:/usr/sbin:$PATH
 export PATH
   
 CFG_FILE=/etc/salixPackaging
+LOCALREPO_URL=https://github.com/jrd/localrepo/raw/master/localrepo
+networkBase=192.168.100
 
 CNONE="[0m"
+CBOLD="[;1m"
 CRED="[31m"; CLRED="[31;1m"
 CGREEN="[32m"; CLGREEN="[32;1m"
 CMAROON="[33m"; CYELLOW="[33;1m"
@@ -24,53 +27,61 @@ CWHITE="[38m"; CLWHITE="[38;1m"
 
 usage() {
   needroot="$CLRED*$CNONE"
+  implemented="$CLGREEN+$CNONE"
   cat <<EOF
 Usage: salixPackaging [OPTIONS]
 Help a packager to manage his/her packages for Salix.
 
 Where OPTIONS are:
-  -h, --help
+  -h, --help $implemented
     This usage
-  -V, --version
+  -V, --version $implemented
     Show the version
-  --check
+  --check $implemented
     Sanity check of Host environment.
-  --prepare $needroot
+  --prepare $needroot $implemented
     Prepare the host to install LXC versions of Salix.
-  --register
+  --register $implemented
     Register your information as packager.
-  --install=VERSION,ARCH $needroot
+  --install=VERSION,ARCH $needroot $implemented
     Install a LXC version of Salix for the specified VERSION and ARCH. ARCH could be 'i486' or 'x86_64'.
-  --list-installed
+  --list-installed $implemented
     List all LXC Salix version installed.
-  --remove=VERSION,ARCH $needroot
+  --remove=VERSION,ARCH $needroot $implemented
     Remove a LXC Salix version.
-  -c, --create
+  -c, --create $implemented
     Create a new package.
-  -u, --update=PACKAGE_NAME,VERSION
-    Update an already existing package for the Salix VERSION.
-  -e, --edit=PACKAGE_NAME,VERSION
-    Edit a PACKAGE_NAME SLKBUILD file for Salix VERSION.
-  -l, --pkg-list
+  -l, --pkg-list $implemented
     Show all packages and their state.
-  -p, --pkg-info=PACKAGE_NAME,VERSION
-    Show some information about the PACKAGE_NAME for the Salix VERSION.
-  -v, --verify=PACKAGE_NAME,VERSION
+  -p, --pkg-info=PACKAGE_NAME $implemented
+    Show some information about the PACKAGE_NAME.
+  -e, --edit=PACKAGE_NAME,PACKAGE_VER,VERSION $implemented
+    Edit a PACKAGE_NAME SLKBUILD file, version PACKAGE_VER, for Salix VERSION.
+  -v, --verify=PACKAGE_NAME,VERSION $implemented
     Verify the latest stable version of the PACKAGE_NAME for the Salix VERSION.
-  -a, --verify-all
+  -a, --verify-all [=PACKAGE_NAME] $implemented
     Verify the latest stable version on all packages. Will take some time.
-  -b, --build=PACKAGE_NAME,VERSION,ARCH
-    Schedule to build PACKAGE_NAME for Salix version VERSION and ARCH..
-  -q, --queue
-    Show the schedule queue.
-  -r, --rsync
+  -u, --update=PACKAGE_NAME,VERSION $implemented
+    Update an already existing package for the Salix VERSION.
+  -b, --build=PACKAGE_NAME,PACKAGE_VER,VERSION,ARCH[,NUMJOBS] $implemented
+    Schedule to build PACKAGE_NAME, version PACKAGE_VER, for Salix version VERSION and ARCH.
+    NUMJOBS indicate the number of processors/cores to use when building. Default 1.
+    The build is appened to the queue.
+  -q, --queue=ACTION $implemented
+    Manage the build queue. ACTION could be:
+    - list list the queue
+    - clear clear the queue
+    - remove:POSITION1,POSITION2,… remove a build from the queue, POSITION could be a position or a range in the form 2-5.
+    - run execute the builds in order from the queue. Each successful build is removed from the queue.
+  -r, --rsync $implemented
     Rsync the local repo to your remote one.
   -t, --ticket=PACKAGE_NAME,VERSION
     Create a ticket on Salix Tracker about PACKAGE_NAME and Salix VERSION for all built ARCH.
   -i, --interactive
     Will enter an interactive mode if used with -l, -p, -v, -q. Creating a package (-c), editing a package (-e), and creating a ticket (-t) are always interactive.
 
-  $needroot: root privileges required.
+  $needroot: root privileges required
+  $implemented: implemented so far
 EOF
 }
 
@@ -90,22 +101,42 @@ Where 'version' could be '14.0', '14.1' for example
 And 'arch' could be 'i486' or 'x86_64'.
 EOF
 }
+check_ver_arch() {
+  echo "$1"|grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
+}
 
 usage_pkg_ver() {
   cat <<EOF
 Package should be filled in the form:
-  package_name,version
-Where 'version' could be '14.0', '14.1' for example.
+  package_name,salix_version
+Where 'salix_version' could be '14.0', '14.1' for example.
 EOF
 }
+check_pkg_ver() {
+  echo "$1"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+}
 
-usage_pkg_ver_arch() {
+usage_pkg_ver_ver() {
   cat <<EOF
 Package should be filled in the form:
-  package_name,version,arch
-Where 'version' could be '14.0', '14.1' for example
+  package_name,package_ver,salix_version
+Where 'salix_version' could be '14.0', '14.1' for example.
+EOF
+}
+check_pkg_ver_ver() {
+  echo "$1"|grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_ver && exit 1
+}
+
+usage_pkg_ver_ver_arch() {
+  cat <<EOF
+Package should be filled in the form:
+  package_name,package_ver,salix_version,arch
+Where 'salix_version' could be '14.0', '14.1' for example
 And 'arch' could be 'i486', 'x86_64' or 'noarch'.
 EOF
+}
+check_pkg_ver_ver_arch() {
+  echo "$1"|grep -vq '^[^,]\+,[^,]\+,[^,]\+,[^,]\+\(,[1-9]\+\)\?$' && usage_pkg_ver_ver_arch && exit 1
 }
 
 check_root() {
@@ -113,74 +144,6 @@ check_root() {
     echo "You should run this action with root privileges." >&2
     exit 1
   fi
-}
-
-action_check() {
-  ok="${CLGREEN}OK$CNONE"
-  fail="${CLRED}Fail$CNONE"
-  if lxc-checkconfig; then
-    echo "LXC: $ok"
-  else
-    echo "LXC: $fail"
-    return 1
-  fi
-  echo -n "Arch: "
-  if [ $(uname -m) = x86_64 ]; then
-    echo "$ok"
-  else
-    echo "$fail"
-    echo "You're not running a 64bits OS, you will not be able to build x86_64 package." >&2
-    echo "Please, run a Salix 64bits to make packages." >&2
-    return 1
-  fi
-  echo -n "rc.local: "
-  if grep -q lxcbr0 /etc/rc.d/rc.local; then
-    echo "$ok"
-  else
-    echo "$fail"
-    echo "rc.local seems not to contain the needed preparation for LXC Bridge." >&2
-    echo "Please, launch the prepare action." >&2
-    return 1
-  fi
-  echo -n "Bridge: "
-  if ifconfig|grep -q 'lxcbr0:'; then
-    echo "$ok"
-  else
-    echo "$fail"
-    echo "lxcbr0 bridge interface seems not to be configured." >&2
-    echo "Please, run /etc/rc.d/rc.local to install it." >&2
-    return 1
-  fi
-  return 0
-}
-
-action_prepare() {
-  check_root
-  cat <<'EOF' >> /etc/rc.d/rc.local
-# salixPackaging
-brctl addbr lxcbr0
-brctl setfd lxcbr0 0
-networkBase=192.168.100
-ifconfig lxcbr0 $networkBase.1 netmask 255.255.255.0 promisc up
-extIface=$(ifconfig|grep -B1 'inet '|sed -nr '/^[^:]+:/ { s/^([^:]+):.*/\1/; h }; $ {g;p}')
-iptables -t nat -A POSTROUTING -s $networkBase.0/24 -o $extIface -j MASQUERADE
-echo 1 > /proc/sys/net/ipv4/ip_forward
-EOF
-  cat <<'EOF' >> /etc/rc.d/rc.local_shutdown
-# salixPackaging
-ifconfig lxcbr0 down
-brctl delbr lxcbr0
-EOF
-  brctl addbr lxcbr0
-  brctl setfd lxcbr0 0
-  networkBase=192.168.100
-  ifconfig lxcbr0 $networkBase.1 netmask 255.255.255.0 promisc up
-  extIface=$(ifconfig|grep -B1 'inet '|sed -nr '/^[^:]+:/ { s/^([^:]+):.*/\1/; h }; $ {g;p}')
-  iptables -t nat -A POSTROUTING -s $networkBase.0/24 -o $extIface -j MASQUERADE
-  echo 1 > /proc/sys/net/ipv4/ip_forward
-  touch $CFG_FILE
-  chmod a+rw $CFG_FILE
-  echo "Bridge interface ${CLGREEN}lxcbr0$CNONE configured. Using IP ${CLGREEN}$networkBase.1$CNONE."
 }
 
 notnull() {
@@ -262,6 +225,74 @@ read_choice() {
   fi
 }
 
+action_check() {
+  ok="${CLGREEN}OK$CNONE"
+  fail="${CLRED}Fail$CNONE"
+  if lxc-checkconfig; then
+    echo "LXC: $ok"
+  else
+    echo "LXC: $fail"
+    return 1
+  fi
+  echo -n "Arch: "
+  if [ $(uname -m) = x86_64 ]; then
+    echo "$ok"
+  else
+    echo "$fail"
+    echo "You're not running a 64bits OS, you will not be able to build x86_64 package." >&2
+    echo "Please, run a Salix 64bits to make packages." >&2
+    return 1
+  fi
+  echo -n "rc.local: "
+  if grep -q lxcbr0 /etc/rc.d/rc.local; then
+    echo "$ok"
+  else
+    echo "$fail"
+    echo "rc.local seems not to contain the needed preparation for LXC Bridge." >&2
+    echo "Please, launch the prepare action." >&2
+    return 1
+  fi
+  echo -n "Bridge: "
+  if ifconfig|grep -q 'lxcbr0:'; then
+    echo "$ok"
+  else
+    echo "$fail"
+    echo "lxcbr0 bridge interface seems not to be configured." >&2
+    echo "Please, run /etc/rc.d/rc.local to install it." >&2
+    return 1
+  fi
+  return 0
+}
+
+action_prepare() {
+  check_root
+  read_info "What is your Internet device (wlan0 or eth0 for example)" '' "sh -c '[ -e /dev/\$1 ]' --"
+  extIface=$READ_VALUE
+  cat <<EOF >> /etc/rc.d/rc.local
+# salixPackaging
+networkBase=$networkBase
+extIface=$extIface
+brctl addbr lxcbr0
+brctl setfd lxcbr0 0
+ifconfig lxcbr0 \$networkBase.1 netmask 255.255.255.0 promisc up
+iptables -t nat -A POSTROUTING -s \$networkBase.0/24 -o \$extIface -j MASQUERADE
+echo 1 > /proc/sys/net/ipv4/ip_forward
+EOF
+  cat <<EOF >> /etc/rc.d/rc.local_shutdown
+# salixPackaging
+ifconfig lxcbr0 down
+brctl delbr lxcbr0
+EOF
+  brctl addbr lxcbr0
+  brctl setfd lxcbr0 0
+  ifconfig lxcbr0 $networkBase.1 netmask 255.255.255.0 promisc up
+  iptables -t nat -A POSTROUTING -s $networkBase.0/24 -o $extIface -j MASQUERADE
+  echo 1 > /proc/sys/net/ipv4/ip_forward
+  touch $CFG_FILE
+  chmod a+rw $CFG_FILE
+  echo "Bridge interface ${CLGREEN}lxcbr0$CNONE configured. Using IP ${CLGREEN}$networkBase.1$CNONE."
+}
+
 action_register() {
   cat <<EOF
 Packager Information
@@ -284,9 +315,9 @@ EOF
   tag=$(for n in $(echo "$name"|tr '-' ' '); do echo -n "$n"|sed -r 's/^(.).*/\1/'|tr A-Z a-z; done)
   read_info 'Package tag' "$tag" || return 1
   tag="$READ_VALUE"
-  read_info 'Remote URL' "http://people.salixos.org/$USER" check_url || return 1
+  read_info 'Remote URL' "http://people.salixos.org/$USER/salix" check_url || return 1
   url="$READ_VALUE"
-  read_info 'SCP URI for Rsync' "simplynux.net:www" check_scp_uri || return 1
+  read_info 'SCP URI for Rsync' "simplynux.net:www/salix" check_scp_uri || return 1
   scpuri="$READ_VALUE"
   read_info 'Schema location' '$pkgname/$pkgver-$arch' notnull || return 1
   schema="$READ_VALUE"
@@ -343,19 +374,42 @@ action_install() {
   echo "Creating LXC Salix $ver - $arch"
   # find next number for IP and Mac address
   n=$(find_installed_salix|wc -l)
-  # host start at 1, so next add +1
-  NUMIP=$(($n + 1))
-  NUMMAC=$(/bin/echo -e "obase=16\n$n + 1"|bc) # hexa
+  # host start at 1, so next add +2
+  NUMIP=$(($n + 2))
+  NUMMAC=$(/bin/echo -e "obase=16\n$n + 2"|bc) # hexa
+  [ "$NUMIP" -lt 16 ] && NUMMAC="0$NUMMAC" # before 16=0x10, prepend a 0
   conf=$(mktemp)
   sed -r "s/@NUMIP@/$NUMIP/; s/@NUMMAC@/$NUMMAC/;" lxc-default.conf > $conf
   name=salixpkg-$ver-$arch
   if lxc-create -n $name -f $conf -t $PWD/lxc-salix -- --arch=$arch --release=$ver; then
     rm $conf
     . $CFG_FILE
-    echo "pkg::$pkgr_uid:users:::/bin/bash"|/usr/sbin/newusers -R /var/lib/lxc/$name/rootfs
-    /usr/sbin/usermod -R /var/lib/lxc/$name/rootfs -a -G lp,wheel,floppy,audio,video,cdrom,plugdev,power,netdev,scanner pkg
+    chroot /var/lib/lxc/$name/rootfs sh -c "echo 'pkg:pkg:$pkgr_uid:users::/home/pkg:/bin/bash'|/usr/sbin/newusers"
+    chroot /var/lib/lxc/$name/rootfs /usr/sbin/usermod -a -G lp,wheel,floppy,audio,video,cdrom,plugdev,power,netdev,scanner pkg
+    chmod +x /var/lib/lxc/$name/rootfs/etc/rc.d/rc.sshd
+    mkdir -p /var/lib/lxc/$name/rootfs/root/.ssh /var/lib/lxc/$name/rootfs/home/pkg/.ssh
+    touch /var/lib/lxc/$name/rootfs/root/.ssh/authorized_keys /var/lib/lxc/$name/rootfs/home/pkg/.ssh/authorized_keys
+    chroot /var/lib/lxc/$name/rootfs chown -R pkg: /home/pkg/.ssh
+    chmod go= /var/lib/lxc/$name/rootfs/root/.ssh /var/lib/lxc/$name/rootfs/home/pkg/.ssh
+    for sec in rsa dsa; do
+      if [ -e /home/$pkgr_user/.ssh/id_$sec.pub ]; then
+        cat /home/$pkgr_user/.ssh/id_$sec.pub > /var/lib/lxc/$name/rootfs/root/.ssh/authorized_keys
+        cat /home/$pkgr_user/.ssh/id_$sec.pub > /var/lib/lxc/$name/rootfs/home/pkg/.ssh/authorized_keys
+        break
+      fi
+    done
+    # local repository
+    wget -O /var/lib/lxc/$name/rootfs/usr/local/sbin/localrepo "$LOCALREPO_URL"
+    chmod +x /var/lib/lxc/$name/rootfs/usr/local/sbin/localrepo
+    # script to install deps
+    cat <<'EOF' > /var/lib/lxc/$name/rootfs/usr/local/sbin/installdeps
+#!/bin/sh
+/usr/sbin/slapt-get -u && /usr/sbin/slapt-get -i $(echo "$1"|tr ',' ' ')
+EOF
+    chmod +x /var/lib/lxc/$name/rootfs/usr/local/sbin/installdeps
     if lxc-start -d -n $name; then
       echo "LXC started."
+      chroot /var/lib/lxc/$name/rootfs /usr/local/sbin/localrepo -c
       return 0
     else
       echo "Cannot start the LXC." >&2
@@ -423,9 +477,9 @@ EOF
       salix_ver_ref=$(echo "$already"|tr ' ' '\n'|sort -r|head -n1)
       echo "Package found in Salix version $salix_ver_ref."
       echo "Install it into $new."
-      pkg_ver=$(cat src/$pkg_name/version)
+      pkg_ver=$(cat src/$pkg_name/$salix_ver_ref/version)
       for salix_ver in $new; do
-        copy_package_build "$pkg_name" "$pkg_ver" "$salix_ver_ref" "$salix_ver"
+        copy_package_build "$pkg_name" "$pkg_ver" "$salix_ver_ref" "$salix_ver" true
       done
       echo "Done."
     fi
@@ -472,7 +526,7 @@ EOF
         pkg_check_pattern="$READ_VALUE"
         ;;
       md5sum)
-        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
+        pkg_check_pattern="grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//; s/^/MD5:/'"
     esac
     printf "Latest stable version found: "
     pkg_ver=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern")
@@ -485,11 +539,17 @@ EOF
     else
       pkg_fixver=false
     fi
-    pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|md5sum|sed 's/  -//')
+    pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//')
     read_choice "Build schema" 'configure perl python waf' 'configure' || return 1
     pkg_build_schema="$READ_VALUE"
+    salix_ver_ref=''
     for salix_ver in $(find_installed_salix|cut -d- -f1|sort -u); do
-      store_package_info "$salix_ver" "$pkg_name" "$pkg_arch" "$pkg_url" "$pkg_dl_url" "$pkg_check_schema" "$pkg_check_pattern" "$pkg_md5" "$pkg_ver" "$pkg_fixver" "$pkg_build_schema"
+      if [ -z "$salix_ver_ref" ]; then
+        store_package_info "$salix_ver" "$pkg_name" "$pkg_arch" "$pkg_url" "$pkg_dl_url" "$pkg_check_schema" "$pkg_check_pattern" "$pkg_md5" "$pkg_ver" "$pkg_fixver" "$pkg_build_schema"
+        salix_ver_ref="$salix_ver"
+      else
+        copy_package_build "$pkg_name" "$pkg_ver" "$salix_ver_ref" "$salix_ver" false
+      fi
     done
   fi
   return 0
@@ -538,18 +598,18 @@ store_package_info() {
   pkg_ver="$1"; shift
   pkg_fixver="$1"; shift
   pkg_build_schema="$1"; shift
-  mkdir -p src/$pkg_name
+  mkdir -p src/$pkg_name/$salix_ver
   (
     cd src/$pkg_name
     echo "$pkg_arch" > arch
     echo "$pkg_url" > url
     echo "$pkg_dl_url" > dlurl
+    echo "$pkg_md5" > md5sum
     echo "$pkg_check_schema" > schema
     echo "$pkg_check_pattern" > pattern
-    echo "$pkg_md5" > md5sum
-    echo "$pkg_ver" > version
-    echo "$pkg_fixver" > fixversion
     echo "$pkg_build_schema" > buildschema
+    echo "$pkg_ver" > $salix_ver/version
+    echo "$pkg_fixver" > $salix_ver/fixversion
   )
   store_package_build "$pkg_name" "$pkg_ver" "$salix_ver"
   echo "Information for package ${CGREEN}${pkg_name}$CNONE has been stored for $salix_ver."
@@ -586,6 +646,10 @@ store_package_build() {
   s,@URL@,$pkg_url,;
   /^build()/ rtemplates/build/$pkg_build_schema
 EOF
+  for dep in dep makedep sug con; do
+    cat /dev/null > src/$pkg_name/$salix_ver/$pkg_ver/$dep
+  done
+  action_edit "$pkg_name" "$pkg_ver" "$salix_ver"
 }
 
 copy_package_build() {
@@ -593,81 +657,366 @@ copy_package_build() {
   pkg_ver="$2"
   salix_ver="$3"
   salix_newver="$4"
+  ask="$5"
   mkdir -p src/$pkg_name/$salix_newver/$pkg_ver
+  cp src/$pkg_name/$salix_ver/version src/$pkg_name/$salix_newver/
   cp src/$pkg_name/$salix_ver/$pkg_ver/* src/$pkg_name/$salix_newver/$pkg_ver/
+  echo "$pkg_ver" > src/$pkg_name/$salix_newver/version
+  if $ask; then
+    read_choice "Use this specific fixed ($pkg_ver) version" "y n" "n" || return 1
+    if [ $READ_VALUE = y ]; then
+      echo "true" > src/$pkg_name/$salix_newver/fixversion
+    else
+      echo "false" > src/$pkg_name/$salix_newver/fixversion
+    fi
+  else
+    cp src/$pkg_name/$salix_ver/fixversion src/$pkg_name/$salix_newver/
+  fi
+  echo "Information for package ${CGREEN}${pkg_name}$CNONE has been stored for ${CGREEN}${salix_ver}${CNONE}."
 }
 
-action_edit() {
-  pkgname=$1
-  ver=$2
-  echo FIXME
-  echo edit, pkgname=$pkgname, ver=$ver
-  return 0
+copy_package_ver_build() {
+  pkg_name="$1"
+  salix_ver="$2"
+  pkg_ver="$3"
+  pkg_newver="$4"
+  mkdir -p src/$pkg_name/$salix_ver/$pkg_newver
+  cp src/$pkg_name/$salix_ver/$pkg_ver/* src/$pkg_name/$salix_ver/$pkg_newver/
+  if grep -q '^_pkgver' src/$pkg_name/$salix_ver/$pkg_newver/SLKBUILD; then
+    sed -ri "s/^_pkgver=.*/_pkgver=$pkg_newver/" src/$pkg_name/$salix_ver/$pkg_newver/SLKBUILD
+  else
+    sed -ri "s/^pkgver=.*/pkgver=$pkg_newver/" src/$pkg_name/$salix_ver/$pkg_newver/SLKBUILD
+  fi
+  echo "Information for package ${CGREEN}${pkg_name}$CNONE has been stored in version ${CGREEN}${pkg_newver}${CNONE}, for Salix $salix_ver."
 }
 
 action_pkglist() {
-  echo FIXME
-  echo pkglist
-  echo INTERACTIVE=$INTERACTIVE
+  packages=''
+  for p in $(find src -mindepth 1 -maxdepth 1 -type d|sort); do
+    p=$(basename "$p")
+    salixes=''
+    for s in $(find src/$p -mindepth 1 -maxdepth 1 -type d|sort); do
+      salixes="$salixes,$(basename $s)"
+    done
+    salixes=$(echo "$salixes"|sed 's/^,//')
+    packages="$packages\n$p $salixes"
+  done
+  packages=$(printf "$packages"|sed '1d')
+  if [ $INTERACTIVE -gt 0 ]; then
+    echo Interactive mode # FIXME
+  else
+    printf "$packages\n"
+  fi
   return 0
 }
 
 action_pkginfo() {
-  pkgname=$1
-  ver=$2
-  echo FIXME
-  echo pkginfo, pkgname=$pkgname, ver=$ver
-  echo INTERACTIVE=$INTERACTIVE
+  pkg_name="$1"
+  [ -d src/$pkg_name ] || return 1
+  pkg_arch=$(cat src/$pkg_name/arch)
+  pkg_url=$(cat src/$pkg_name/url)
+  pkg_dl_url=$(cat src/$pkg_name/dlurl)
+  pkg_check_schema=$(cat src/$pkg_name/schema)
+  pkg_check_pattern=$(cat src/$pkg_name/pattern)
+  pkg_md5=$(cat src/$pkg_name/md5sum)
+  pkg_build_schema=$(cat src/$pkg_name/buildschema)
+  cat <<EOF
+${CBOLD}${pkg_name}${CNONE}
+$(for i in $(seq 1 $(expr length "$pkg_name")); do printf '='; done)
+arch=${CLGREEN}${pkg_arch}${CNONE}
+url=$pkg_url
+download url=$pkg_dl_url
+MD5 sum of the download page=$pkg_md5
+Schema check for latest version=$pkg_check_schema
+Schema pattern=$pkg_check_pattern
+Build schema=$pkg_build_schema
+EOF
+  for salix_ver in $(find src/$pkg_name -mindepth 1 -maxdepth 1 -type d|sort); do
+    salix_ver=$(basename "$salix_ver")
+    pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
+    pkg_fixver=$(cat src/$pkg_name/$salix_ver/fixversion)
+    echo ''
+    echo "Versions for ${CLGREEN}${salix_ver}${CNONE}"
+    salix_ver_underline=$(for i in $(seq 1 $(expr length "$salix_ver")); do printf '='; done)
+    echo "=============$salix_ver_underline"
+    echo "Current version=${CBOLD}${pkg_ver}${CNONE}"
+    echo "Version fixed?=${CBOLD}${pkg_fixver}${CNONE}"
+    for v in $(find src/$pkg_name/$salix_ver -mindepth 1 -maxdepth 1 -type d|sort); do
+      v=$(basename "$v")
+      rlz=$(sed -rn '/^pkgrel/{s/.*=([0-9]+).*/\1/;p}' src/$pkg_name/$salix_ver/$v/SLKBUILD)
+      echo "- version ${CLGREEN}${v}${CNONE}, release ${CLGREEN}${rlz}${CNONE}"
+    done
+  done
+  return 0
+}
+
+action_edit() {
+  pkg_name="$1"
+  pkg_ver="$2"
+  salix_ver="$3"
+  [ -r src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD ] || return 1
+  doedit=true
+  while $doedit; do
+    vim src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD
+    grep -q FIXME src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD || doedit=false
+    if $doedit; then
+      echo "There are still some FIXME in the SLKBUILD, please correct them before continue."
+      read junk
+    fi
+  done
+  read_choice "Do you want to edit the local files and dependencies (shell)" "y n" "n" || return 1
+  if [ $READ_VALUE = y ]; then
+    (cd src/$pkg_name/$salix_ver/$pkg_ver && sh)
+  fi
   return 0
 }
 
 action_verify() {
-  pkgname=$1
-  ver=$2
-  echo FIXME
-  echo verify, pkgname=$pkgname, ver=$ver
-  echo INTERACTIVE=$INTERACTIVE
+  pkg_name="$1"
+  salix_ver="$2"
+  [ -d src/$pkg_name/$salix_ver ] || return 1
+  pkg_dl_url=$(cat src/$pkg_name/dlurl)
+  pkg_check_pattern=$(cat src/$pkg_name/pattern)
+  pkg_md5=$(cat src/$pkg_name/md5sum)
+  pkg_new_ver=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern" "$pkg_md5")
+  pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
+  pkg_fixver=$(cat src/$pkg_name/$salix_ver/fixversion)
+  if [ "$pkg_ver" = "$pkg_new_ver" ]; then
+    echo "${CLGREEN}Up to date${CNONE} (${CLCYAN}${pkg_new_ver}${CNONE})"
+  elif [ "$pkg_new_ver" = "up to date" ]; then
+    echo "${CYELLOW}Seems up to date${CNONE} (${CLCYAN}MD5${CNONE})"
+  elif [ "$pkg_new_ver" = "changed" ]; then
+    echo "${CLMAGENTA}Seems changed${CNONE} (${CLCYAN}MD5${CNONE})"
+  elif "$pkg_fixver"; then
+    echo "${CGREEN}Fixed version to ${pkg_ver}${CNONE} (${CLCYAN}${pkg_new_ver}${CNONE})"
+  else
+    echo "${CLRED}Need to upgrade from version ${CBLUE}${pkg_ver}${CLRED} to ${CLCYAN}${pkg_new_ver}${CNONE}"
+  fi
   return 0
 }
 
 action_verifyall() {
-  echo FIXME
-  echo verifyall
-  echo INTERACTIVE=$INTERACTIVE
+  if [ -z "$1" ]; then
+    pkg_list=$(find src -mindepth 1 -maxdepth 1 -type d|sort)
+  else
+    [ -d src/$1 ] || return 1
+    pkg_list="$1"
+  fi
+  for p in $pkg_list; do
+    pkg_name=$(basename "$p")
+    for s in $(find src/$pkg_name -mindepth 1 -maxdepth 1 -type d|sort); do
+      salix_ver=$(basename "$s")
+      printf "$pkg_name - $salix_ver: "
+      action_verify "$pkg_name" "$salix_ver"
+    done
+  done
   return 0
 }
 
+action_update() {
+  pkg_name="$1"
+  salix_ver="$2"
+  stable="$3"
+  [ -z "$stable" ] && stable=true
+  [ -d src/$pkg_name/$salix_ver ] || return 1
+  pkg_fixver=$(cat src/$pkg_name/$salix_ver/fixversion)
+  if $pkg_fixver; then
+    echo "${CLRED}Cannot update, fix version requested${CNONE}" >&2
+    return 1
+  else
+    url=$(cat src/$pkg_name/dlurl)
+    pat=$(cat src/$pkg_name/pattern)
+    oldver=$(cat src/$pkg_name/$salix_ver/version)
+    filter=$(mktemp) # better than using eval I think.
+    echo '#!/bin/sh' > $filter
+    printf "$pat" >> $filter
+    $stable && printf "|grep -vi 'alpha\\|beta\\|m[0-9]\\|rc'" >> $filter
+    chmod +x $filter
+    ver=$(wget --no-check-certificate -q -O - "$url"|$filter|head -n1)
+    rm $filter
+    if echo "$ver"|grep -q '^MD5:'; then
+      md5=$(echo "$ver"|sed 's/MD5://')
+    else
+      md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//')
+    fi
+    echo "$md5" > src/$pkg_name/md5sum
+    echo "$ver" > src/$pkg_name/$salix_ver/version
+    if echo "$ver"|grep -qv '^MD5'; then
+      copy_package_ver_build "$pkg_name" "$salix_ver" "$oldver" "$ver"
+    fi
+    echo "${CLGREEN}Updated to version ${CLCYAN}${ver}${CNONE}"
+    return 0
+  fi
+}
+
 action_build() {
-  pkgname=$1
-  ver=$2
-  arch=$3
-  echo FIXME
-  echo build, pkgname=$pkgname, ver=$ver, arch=$arch
+  pkg_name="$1"
+  pkg_ver="$2"
+  salix_ver="$3"
+  salix_arch="$4"
+  numjobs="$5"
+  [ -z "$numjobs" ] && numjobs=1
+  check_registered
+  [ -r src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD ] || return 1
+  found=false
+  for salix in $(find_installed_salix); do
+    sver=$(echo $salix|cut -d- -f1)
+    sarch=$(echo $salix|cut -d- -f2)
+    if [ $sver = $salix_ver ] && [ $sarch = $salix_arch ]; then
+      found=true
+      break
+    fi
+  done
+  if ! $found; then
+    echo "LXC Salix version $salix_ver and arch $salix_arch has not been installed." >&2
+    return 1
+  fi
+  deps=''
+  if [ -r src/$pkg_name/$salix_ver/$pkg_ver/makedep ]; then
+    deps=$(cat src/$pkg_name/$salix_ver/$pkg_ver/makedep) 
+  fi
+  if [ -r src/$pkg_name/$salix_ver/$pkg_ver/dep ]; then
+    [ -n "$deps" ] && deps="$deps,"
+    deps="${deps}$(cat src/$pkg_name/$salix_ver/$pkg_ver/dep)"
+  fi
+  echo "$pkg_name,$pkg_ver,$salix_ver,$salix_arch:$numjobs:$deps" >> queue
+  echo "$pkg_name-$pkg_ver for $salix_ver-$salix_arch added to the queue."
   return 0
 }
 
 action_queue() {
-  echo FIXME
-  echo queue
-  echo INTERACTIVE=$INTERACTIVE
-  return 0
+  action="$1"
+  check_registered
+  check_numlxc
+  [ -e queue ] || touch queue
+  case "$action" in
+    list)
+      sed 's/:.*//;s/,/-/;s/,/ on /;s/,/-/;=' queue|sed -n 'h;n;H;g;s/\n/: /p'
+      return 0
+      ;;
+    clear)
+      cat /dev/null > queue
+      return 0
+      ;;
+    remove:*)
+      param=$(echo "$action"|cut -d: -f2)
+      lines=''
+      for line in $(echo $param|tr , ' '); do
+        if echo $line|grep -q '-'; then
+          for subline in $(seq $(echo $line|cut -d- -f1) $(echo $line|cut -d- -f2)); do
+            lines="$lines${subline}d;"
+          done
+        else
+          lines="$lines${line}d;"
+        fi
+      done
+      sed -i "$lines" queue
+      return $?
+      ;;
+    run)
+      . $CFG_FILE
+      line=$(head -n1 queue)
+      while [ -n "$line" ]; do
+        pkg=$(echo $line|cut -d: -f1)
+        numjobs=$(echo $line|cut -d: -f2)
+        deps=$(echo $line|cut -d: -f3)
+        pkg_name=$(echo $pkg|cut -d, -f1)
+        pkg_ver=$(echo $pkg|cut -d, -f2)
+        salix_ver=$(echo $pkg|cut -d, -f3)
+        salix_arch=$(echo $pkg|cut -d, -f4)
+        pkg_arch=$(cat src/$pkg_name/arch)
+        [ $pkg_arch = all ] && pkg_arch=$salix_arch
+        lxc_name=salixpkg-$salix_ver-$salix_arch
+        lxc_root=/var/lib/lxc/$lxc_name/rootfs
+        lxc_build=/home/pkg/build/$pkg_name-$pkg_ver
+        lxc_ip=
+        src_dir=src/$pkg_name/$salix_ver/$pkg_ver
+        echo "Building $pkg_name-$pkg_ver for $salix_ver-$salix_arch..."
+        # remove old build if any
+        rm -rf ${lxc_root}${lxc_build}
+        mkdir -p ${lxc_root}${lxc_build}
+        cp -rv $src_dir/. ${lxc_root}${lxc_build}/
+        lxc_ip=$(sed -rn '/lxc.network.ipv4[ =]/{s,.*= *(.+)/.*,\1,;p}' /var/lib/lxc/$lxc_name/config)
+        [ -n "$deps" ] && ssh -t root@$lxc_ip "installdeps $deps"
+        if [ $? -ne 0 ]; then
+          echo "${CLRED}Unable to install the dependencies for $pkg_name-$pkg_ver for $salix_ver-$salix_arch${CNONE}" >&2
+          echo "Deps list: ${CRED}$deps${CNONE}" >&2
+          return 1
+        fi
+        # building the package
+        ssh -t pkg@$lxc_ip "cd $lxc_build; LANG=en_US.utf8 numjobs=$numjobs fakeroot slkbuild -X"
+        if [ $? -eq 0 ]; then
+          pkg_base_name=$(basename $(ls ${lxc_root}${lxc_build}/$pkg_name-$pkg_ver-*.txz) .txz)
+          # create .dep, .sug and .con files if non empty
+          for deps in dep sug con; do
+            f=${lxc_root}${lxc_build}/$deps
+            if [ -e $f ] && [ -n "$(cat $f)" ]; then
+              mv $f ${lxc_root}${lxc_build}/$pkg_base_name.$deps
+            else
+              rm -f $f
+            fi
+          done
+          rm -f ${lxc_root}${lxc_build}/makedep
+          # add the package to the localrepo
+          grep -q '/localrepo/' ${lxc_root}/etc/slapt-get/slapt-getrc || ssh -t root@$lxc_ip "localrepo -s"
+          ssh -t root@$lxc_ip "localrepo -a ${lxc_build}/$pkg_base_name.txz"
+          bin_dir=$(echo "bin/$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver/; s/\$arch/$pkg_arch/")
+          mkdir -p $bin_dir
+          cp -rv ${lxc_root}${lxc_build}/. $bin_dir/
+          echo "${CLGREEN}Package $pkg_name-$pkg_ver building DONE for $salix_ver-$salix_arch${CNONE}"
+          sed -i '1d' queue # remove first line
+          line=$(head -n1 queue) # read the next one
+        else
+          echo "${CLRED}Package $pkg_name-$pkg_ver building FAILED for $salix_ver-$salix_arch${CNONE}" >&2
+          read_choice "Would you like to edit the package" "y n" "y"
+          if [ $READ_VALUE = y ]; then
+            action_edit "$pkg_name" "$pkg_ver" "$salix_ver"
+          fi
+          break
+        fi
+      done
+      if [ -z $(cat queue) ]; then
+        return 0
+      else
+        return 1
+      fi
+      ;;
+    *)
+      echo "Unknown action $action for queue." >&2
+      return 1
+      ;;
+  esac
 }
 
 action_rsync() {
-  echo FIXME
-  echo rsync
-  return 0
+  . $CFG_FILE
+  mkdir remote
+  if sshfs -o uid=$(id -u) -o gid=$(id -g) "$pkgr_scpuri" remote; then
+    echo "Connection ok, Synchronizing..."
+    rsync -rv --del bin/ remote
+    sync
+    sleep 1
+    fusermount -u remote
+    sleep 1
+    rmdir remote
+    echo "${CLGREEN}Synchronization done${CNONE}"
+    return 0
+  else
+    rmdir remote
+    echo "${CLRED}Cannot connect, please check your configuration for $pkgr_scpuri${CNONE}" >&2
+    return 1
+  fi
 }
 
 action_ticket() {
-  pkgname=$1
-  ver=$2
+  pkg_name="$1"
+  salix_ver="$2"
   echo FIXME
   echo ticket, pkgname=$pkgname, ver=$ver
   return 0
 }
 
-opts=$(getopt -o 'hVce:lp:v:ab:qrt:i' -l 'help,version,check,prepare,install:,list-installed,remove:,register,create,edit:,pkg-list,pkg-info:,verify:,verify-all,build:,queue,rsync,ticket:,interactive' -- "$@")
+opts=$(getopt -o 'hVclp:e:v:a::u:b:q:rt:i' -l 'help,version,check,prepare,install:,list-installed,remove:,register,create,pkg-list,pkg-info:,edit:,verify:,verify-all::,update:,build:,queue:,rsync,ticket:,interactive' -- "$@")
 ret=$?
 if [ $ret -eq 1 ]; then
   usage
@@ -679,6 +1028,8 @@ else
   PARAM1=''
   PARAM2=''
   PARAM3=''
+  PARAM4=''
+  PARAM5=''
   while [ -n "$1" -a "$1" != "--" ]; do
     case "$1" in
       -h|--help)
@@ -708,7 +1059,7 @@ else
         ACTION=install
         verarch=$1
         shift
-        echo "$verarch"|grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
+        check_ver_arch "$verarch"
         PARAM1=$(echo $verarch|cut -d, -f1)
         PARAM2=$(echo $verarch|cut -d, -f2)
         ;;
@@ -721,7 +1072,7 @@ else
         ACTION=remove
         verarch=$1
         shift
-        echo "$verarch"|grep -vq '^[^,]\+,[^,]\+$' && usage_ver_arch && exit 1
+        check_ver_arch "$verarch"
         PARAM1=$(echo $verarch|cut -d, -f1)
         PARAM2=$(echo $verarch|cut -d, -f2)
         ;;
@@ -730,16 +1081,6 @@ else
         ACTION=create
         INTERACTIVE=1
         ;;
-      -e|--edit)
-        shift
-        ACTION=edit
-        INTERACTIVE=1
-        fullpkg=$1
-        shift
-        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
-        PARAM1=$(echo $fullpkg|cut -d, -f1)
-        PARAM2=$(echo $fullpkg|cut -d, -f2)
-        ;;
       -l|--pkg-list)
         shift
         ACTION=pkglist
@@ -747,38 +1088,64 @@ else
       -p|--pkg-info)
         shift
         ACTION=pkginfo
+        PARAM1=$1
+        shift
+        ;;
+      -e|--edit)
+        shift
+        ACTION=edit
+        INTERACTIVE=1
         fullpkg=$1
         shift
-        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        check_pkg_ver_ver "$fullpkg" && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
+        PARAM3=$(echo $fullpkg|cut -d, -f3)
         ;;
       -v|--verify)
         shift
         ACTION=verify
         fullpkg=$1
         shift
-        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        check_pkg_ver "$fullpkg" && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         ;;
       -a|--verify-all)
         shift
         ACTION=verifyall
+        if echo "$1"|grep -vq '^-'; then
+          PARAM1="$1"
+          shift
+        fi
+        ;;
+      -u|--update)
+        shift
+        ACTION=update
+        INTERACTIVE=1
+        fullpkg=$1
+        shift
+        check_pkg_ver "$fullpkg" && exit 1
+        PARAM1=$(echo $fullpkg|cut -d, -f1)
+        PARAM2=$(echo $fullpkg|cut -d, -f2)
         ;;
       -b|--build)
         shift
         ACTION=build
         fullpkg=$1
         shift
-        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+,[^,]\+$' && usage_pkg_ver_arch && exit 1
+        check_pkg_ver_ver_arch "$fullpkg" && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         PARAM3=$(echo $fullpkg|cut -d, -f3)
+        PARAM4=$(echo $fullpkg|cut -d, -f4)
+        PARAM5=$(echo $fullpkg|cut -d, -f5)
         ;;
       -q|--queue)
         shift
         ACTION=queue
+        PARAM1="$1"
+        shift
         ;;
       -r|--rsync)
         shift
@@ -790,7 +1157,7 @@ else
         INTERACTIVE=1
         fullpkg=$1
         shift
-        echo "$fullpkg"|grep -vq '^[^,]\+,[^,]\+$' && usage_pkg_ver && exit 1
+        check_pkg_ver "$fullpkg" && exit 1
         PARAM1=$(echo $fullpkg|cut -d, -f1)
         PARAM2=$(echo $fullpkg|cut -d, -f2)
         ;;
@@ -807,6 +1174,12 @@ else
     usage
     exit 1
   else
-    action_$ACTION $PARAM1 $PARAM2 $PARAM3
+    # fix for optional args with getopt
+    shift # remove "--"
+    [ $ACTION = verifyall ] && [ -n "$1" ] && PARAM1="$1"
+    if ! action_$ACTION $PARAM1 $PARAM2 $PARAM3 $PARAM4 $PARAM5; then
+      echo "An error occured while processing action ${CLRED}$ACTION" $PARAM1 $PARAM2 $PARAM3 $PARAM4 $PARAM5 $CNONE >&2
+      exit 1
+    fi
   fi
 fi

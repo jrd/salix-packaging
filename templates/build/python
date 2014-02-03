@@ -1,2 +1,2 @@
-  cd $SRC/$pkgname-$pkgver
-  python setup.py install --prefix=/usr --root=$PKG
+  cd $SRC/$pkgname-$pkgver || return 1
+  python setup.py install --prefix=/usr --root=$PKG || return 1
