@@ -1,4 +1,4 @@
-# vim: syn=sh et sw=2 sts=2 ts=2 tw=0:
+# vim: syn=sh ft=sh et sw=2 sts=2 ts=2 tw=0:
 #Packager: @PNAME@ <@PEMAIL@>
 
 pkgname=@NAME@
