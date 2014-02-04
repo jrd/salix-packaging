@@ -60,7 +60,10 @@ SETTINGS_PKGS=${SETTINGS_PKGS:-https://raw.github.com/gapan/iso-creation/master/
 
 copy_configuration() {
   mkdir -p $config_path
+  lxcarch=$arch
+  [ "$lxcarch" = "i486" ] && lxcarch=i686
   cat <<EOF >> $config_path/config
+lxc.arch = $lxcarch
 lxc.utsname = $name
 lxc.rootfs = $rootfs_path
 lxc.mount = $config_path/fstab
