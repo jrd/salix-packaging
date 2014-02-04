@@ -688,10 +688,10 @@ copy_package_ver_build() {
 
 action_pkglist() {
   packages=''
-  for p in $(find src -mindepth 1 -maxdepth 1 -type d|sort); do
+  for p in $(find src -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
     p=$(basename "$p")
     salixes=''
-    for s in $(find src/$p -mindepth 1 -maxdepth 1 -type d|sort); do
+    for s in $(find src/$p -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
       salixes="$salixes,$(basename $s)"
     done
     salixes=$(echo "$salixes"|sed 's/^,//')
@@ -727,7 +727,7 @@ Schema check for latest version=$pkg_check_schema
 Schema pattern=$pkg_check_pattern
 Build schema=$pkg_build_schema
 EOF
-  for salix_ver in $(find src/$pkg_name -mindepth 1 -maxdepth 1 -type d|sort); do
+  for salix_ver in $(find src/$pkg_name -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
     salix_ver=$(basename "$salix_ver")
     pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
     pkg_fixver=$(cat src/$pkg_name/$salix_ver/fixversion)
@@ -737,7 +737,7 @@ EOF
     echo "=============$salix_ver_underline"
     echo "Current version=${CBOLD}${pkg_ver}${CNONE}"
     echo "Version fixed?=${CBOLD}${pkg_fixver}${CNONE}"
-    for v in $(find src/$pkg_name/$salix_ver -mindepth 1 -maxdepth 1 -type d|sort); do
+    for v in $(find src/$pkg_name/$salix_ver -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
       v=$(basename "$v")
       rlz=$(sed -rn '/^pkgrel/{s/.*=([0-9]+).*/\1/;p}' src/$pkg_name/$salix_ver/$v/SLKBUILD)
       echo "- version ${CLGREEN}${v}${CNONE}, release ${CLGREEN}${rlz}${CNONE}"
@@ -793,14 +793,14 @@ action_verify() {
 
 action_verifyall() {
   if [ -z "$1" ]; then
-    pkg_list=$(find src -mindepth 1 -maxdepth 1 -type d|sort)
+    pkg_list=$(find src -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort)
   else
     [ -d src/$1 ] || return 1
     pkg_list="$1"
   fi
   for p in $pkg_list; do
     pkg_name=$(basename "$p")
-    for s in $(find src/$pkg_name -mindepth 1 -maxdepth 1 -type d|sort); do
+    for s in $(find src/$pkg_name -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
       salix_ver=$(basename "$s")
       printf "$pkg_name - $salix_ver: "
       action_verify "$pkg_name" "$salix_ver"
