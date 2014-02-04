@@ -490,44 +490,40 @@ EOF
     pkg_url="$READ_VALUE"
     read_info 'Download URL page' '' check_url || return 1
     pkg_dl_url="$READ_VALUE"
-    read_choice "Latest version check schema.\nChoose from" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad custom md5sum' 'sf_latest' || return 1
-    pkg_check_schema="$READ_VALUE"
-    case $pkg_check_schema in
-      sf_latest)
-        pkg_check_pattern='grep -A1 "/files/latest/download"|sed -rn '\''/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\\1,;p}'\'
-        ;;
-      sf_folders)
-        pkg_check_pattern='grep -B1 "Click to enter "|sed -rn '\''/href/{s,.*/([^/]+)/".*,\\1,;p}'\''|sort -rV'
-        ;;
-      sf_files)
-        pkg_check_pattern='grep "Click to download "|sed -r '\''s,.*download .+-([^-]+)\.tar\.[bgx]z2?\".*,\\1,'\''|sort -rV'
-        ;;
-      github)
-        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-        ;;
-      apacheindex)
-        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-        ;;
-      nginxindex)
-        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-        ;;
-      googlecode)
-        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-        ;;
-      launchpad)
-        pkg_check_pattern="md5sum|sed 's/  -//; s/^/MD5:/'"
-        ;;
-      custom)
-        echo "A custom pattern is a filter on the HTML download page"
-        echo "in order to find the latest stable version."
-        echo "Example for a sourceforge project named 'mysoft':"
-        echo "  grep 'FIXME'|sed -r 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -r -V|head -n 1"
-        read_info 'Custom pattern' '' notnull || return 1
-        pkg_check_pattern="$READ_VALUE"
-        ;;
-      md5sum)
-        pkg_check_pattern="grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//; s/^/MD5:/'"
-    esac
+    pkg_check_schema=''
+    while [ -z "$pkg_check_schema" ]; do
+      read_choice "Latest version check schema.\nChoose from" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad md5sum custom help' 'sf_latest' || return 1
+      pkg_check_schema="$READ_VALUE"
+      pattern_sf_latest='grep -A1 "/files/latest/download"|sed -rn '\''/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\\1,;p}'\'
+      pattern_sf_folders='grep -B1 "Click to enter "|sed -rn '\''/href/{s,.*/([^/]+)/".*,\\1,;p}'\''|sort -rV'
+      pattern_sf_files='grep "Click to download "|sed -r '\''s,.*download .+-([^-]+)\.tar\.[bgx]z2?\".*,\\1,'\''|sort -rV'
+      pattern_github="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
+      pattern_apacheindex="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
+      pattern_nginxindex="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
+      pattern_googlecode="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
+      pattern_launchpad="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
+      pattern_md5sum="grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//; s/^/MD5:/'"
+      case $pkg_check_schema in
+        sf_latest\|sf_folders\|sf_files\|github\|apacheindex\|nginxindex\|googlecode\|launchpad\|md5sum)
+          eval pkg_check_pattern=\$pattern_$pkg_check_schema
+          ;;
+        custom)
+          echo "A custom pattern is a filter on the HTML download page"
+          echo "in order to find the latest stable version."
+          echo "Example for a sourceforge project named 'mysoft':"
+          echo "  grep 'FIXME'|sed -r 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -r -V|head -n 1"
+          read_info 'Custom pattern' '' notnull || return 1
+          pkg_check_pattern="$READ_VALUE"
+          ;;
+        help)
+          for p in sf_latest sf_folders sf_files github apache nginx googlecode launchpad md5sum; do
+            eval echo $p: \$pattern_$p
+          done
+          pkg_check_schema=''
+          ;;
+      esac
+    done
+    echo "Pattern: $pkg_check_pattern"
     printf "Latest stable version found: "
     pkg_ver=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern")
     echo $pkg_ver
