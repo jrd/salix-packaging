@@ -933,11 +933,13 @@ action_queue() {
         mkdir -p ${lxc_root}${lxc_build}
         cp -rv $src_dir/. ${lxc_root}${lxc_build}/
         lxc_ip=$(sed -rn '/lxc.network.ipv4[ =]/{s,.*= *(.+)/.*,\1,;p}' /var/lib/lxc/$lxc_name/config)
-        [ -n "$deps" ] && ssh -t root@$lxc_ip "installdeps $deps"
-        if [ $? -ne 0 ]; then
-          echo "${CLRED}Unable to install the dependencies for $pkg_name-$pkg_ver for $salix_ver-$salix_arch${CNONE}" >&2
-          echo "Deps list: ${CRED}$deps${CNONE}" >&2
-          return 1
+        if [ -n "$deps" ]; then
+          ssh -t root@$lxc_ip "installdeps $deps"
+          if [ $? -ne 0 ]; then
+            echo "${CLRED}Unable to install the dependencies for $pkg_name-$pkg_ver for $salix_ver-$salix_arch${CNONE}" >&2
+            echo "Deps list: ${CRED}$deps${CNONE}" >&2
+            return 1
+          fi
         fi
         # building the package
         ssh -t pkg@$lxc_ip "cd $lxc_build; LANG=en_US.utf8 numjobs=$numjobs fakeroot slkbuild -X"
