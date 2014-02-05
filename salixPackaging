@@ -164,7 +164,7 @@ read_info() {
   value=
   [ -n "$def" ] && prompt="$prompt [$def]: " || prompt="$prompt: "
   valid=false
-  trap 'echo;echo "Interrupted";break' 2 # will break on ctrl+c
+  trap 'printf "\nInterrupted\n";exit 2' 2 # will break on ctrl+c
   while ! $valid; do
     printf "$prompt"
     read -r value # hopes the -r is portable enough
@@ -185,28 +185,38 @@ read_info() {
 # $1 = prompt
 # $2 = choices, separated by spaces in lowercase
 # $3 = default value
+# $4 = case insensitive (true, default) or not (false)
 # The chosen value is put in the global READ_VALUE variable
 # exit with error on ctrl+c
 read_choice() {
   prompt="$1"
   choices="$2"
   def="$3"
+  case_insensitive="$4"
+  [ -z "$case_insensitive" ] && case_insensitive=true
+  if $case_insensitive; then
+    filterdef='tr a-z A-Z'
+    filterval='tr A-Z a-z'
+  else
+    filterdef='cat'
+    filterval='cat'
+  fi
   value=
   prompt="$prompt ["
   first=true
   for c in $choices; do
     $first || prompt="${prompt},"
     first=false
-    [ "$c" = "$def" ] && c=$(echo "$c"|tr a-z A-Z)
+    [ "$c" = "$def" ] && c=${CBOLD}$(echo "$c"|$filterdef)${CNONE}
     prompt="${prompt}${c}"
   done
   prompt="$prompt]? "
   valid=false
-  trap 'echo;echo "Interrupted";break' 2 # will break on ctrl+c
+  trap 'printf "\nInterrupted\n";exit 2' 2 # will break on ctrl+c
   while ! $valid; do
     printf "$prompt"
     read -r value # hopes the -r is portable enough
-    value=$(echo "$value"|tr A-Z a-z)
+    value=$(echo "$value"|$filterval)
     [ -n "$def" ] && [ -z "$value" ] && value="$def"
     for c in $choices; do
       if [ "$value" = "$c" ]; then
@@ -319,8 +329,10 @@ EOF
   url="$READ_VALUE"
   read_info 'SCP URI for Rsync' "simplynux.net:www/salix" check_scp_uri || return 1
   scpuri="$READ_VALUE"
-  read_info 'Schema location' '$pkgname/$pkgver-$arch' notnull || return 1
+  read_info 'Schema location' '$pkgname/$pkgver-$arch-$pkgrel' notnull || return 1
   schema="$READ_VALUE"
+  read_info "Your Sourceforge bearer token authentication is needed.\nYou can make one on https://sourceforge.net/auth/oauth/\nBearer Token" '' notnull
+  token="$READ_VALUE"
   cat <<EOF > $CFG_FILE
 pkgr_name="$name"
 pkgr_email="$email"
@@ -330,6 +342,7 @@ pkgr_scpuri='$scpuri'
 pkgr_schema='$schema'
 pkgr_user='$USER'
 pkgr_uid=$(id -u)
+pkgr_token=$token
 EOF
   return 0
 }
@@ -436,6 +449,7 @@ action_remove() {
   arch=$2
   check_root
   echo "Removing LXC Salix $ver - $arch"
+  lxc-stop -n salixpkg-$ver-$arch
   lxc-destroy -n salixpkg-$ver-$arch
   return $?
 }
@@ -699,7 +713,7 @@ action_pkglist() {
   done
   packages=$(printf "$packages"|sed '1d')
   if [ $INTERACTIVE -gt 0 ]; then
-    echo Interactive mode # FIXME
+    echo Interactive mode # TODO
   else
     printf "$packages\n"
   fi
@@ -887,8 +901,12 @@ action_queue() {
   [ -e queue ] || touch queue
   case "$action" in
     list)
-      sed 's/:.*//;s/,/-/;s/,/ on /;s/,/-/;=' queue|sed -n 'h;n;H;g;s/\n/: /p'
-      return 0
+      if [ $INTERACTIVE -gt 0 ]; then
+        echo Interactive mode # TODO
+      else
+        sed 's/:.*//;s/,/-/;s/,/ on /;s/,/-/;=' queue|sed -n 'h;n;H;g;s/\n/: /p'
+        return 0
+      fi
       ;;
     clear)
       cat /dev/null > queue
@@ -927,7 +945,8 @@ action_queue() {
         lxc_build=/home/pkg/build/$pkg_name-$pkg_ver
         lxc_ip=
         src_dir=src/$pkg_name/$salix_ver/$pkg_ver
-        echo "Building $pkg_name-$pkg_ver for $salix_ver-$salix_arch..."
+        echo ''
+        echo ${CLCYAN}"Building $pkg_name-$pkg_ver for $salix_ver-$salix_arch...${CNONE}"
         # remove old build if any
         rm -rf ${lxc_root}${lxc_build}
         mkdir -p ${lxc_root}${lxc_build}
@@ -944,12 +963,13 @@ action_queue() {
         # building the package
         ssh -t pkg@$lxc_ip "cd $lxc_build; LANG=en_US.utf8 numjobs=$numjobs fakeroot slkbuild -X"
         if [ $? -eq 0 ]; then
-          pkg_base_name=$(basename $(ls ${lxc_root}${lxc_build}/$pkg_name-$pkg_ver-*.txz) .txz)
+          pkg_rel=$(sed -rn '/^pkgrel/{s/.*=([0-9]+.*)/\1/;p}' ${lxc_root}${lxc_build}/SLKBUILD)
+          pkg_base_name=$pkg_name-$pkg_ver-$pkg_arch-$pkg_rel
           # create .dep, .sug and .con files if non empty
-          for deps in dep sug con; do
-            f=${lxc_root}${lxc_build}/$deps
+          for ext in dep sug con; do
+            f=${lxc_root}${lxc_build}/$ext
             if [ -e $f ] && [ -n "$(cat $f)" ]; then
-              mv $f ${lxc_root}${lxc_build}/$pkg_base_name.$deps
+              mv $f ${lxc_root}${lxc_build}/$pkg_base_name.$ext
             else
               rm -f $f
             fi
@@ -958,7 +978,7 @@ action_queue() {
           # add the package to the localrepo
           grep -q '/localrepo/' ${lxc_root}/etc/slapt-get/slapt-getrc || ssh -t root@$lxc_ip "localrepo -s"
           ssh -t root@$lxc_ip "localrepo -a ${lxc_build}/$pkg_base_name.txz"
-          bin_dir=$(echo "bin/$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver/; s/\$arch/$pkg_arch/")
+          bin_dir=$(echo "bin/$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver/; s/\$arch/$pkg_arch/; s/\$pkgrel/$pkg_rel/")
           mkdir -p $bin_dir
           cp -rv ${lxc_root}${lxc_build}/. $bin_dir/
           echo "${CLGREEN}Package $pkg_name-$pkg_ver building DONE for $salix_ver-$salix_arch${CNONE}"
@@ -1009,9 +1029,80 @@ action_rsync() {
 action_ticket() {
   pkg_name="$1"
   salix_ver="$2"
-  echo FIXME
-  echo ticket, pkgname=$pkgname, ver=$ver
-  return 0
+  [ -d src/$pkg_name/$salix_ver ] || return 1
+  pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
+  pkg_rel=$(sed -rn '/^pkgrel/{s/.*=([0-9]+.*)/\1/;p}' src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD)
+  pkg_url=$(cat src/$pkg_name/url)
+  pkg_arch=$(cat src/$pkg_name/arch)
+  if [ "$pkg_arch" = "all" ]; then
+    arches="i486 x86_64 arm"
+  else
+    arches="$pkg_arch"
+  fi
+  . $CFG_FILE
+  read_choice "Ticket Type" 'New Upgrade Rebuild Transfer' 'New' false || return 1
+  tickettype="$READ_VALUE"
+  read_choice "Importance" 'Trivial  Minor  Normal  Major  Critical' 'Normal' false || return 1
+  importance="$READ_VALUE"
+  read_info "Short message" '' true || return 1
+  message="$READ_VALUE"
+  desc=''
+  if [ -n "$message" ]; then
+    desc='*'$(printf "$message"|sed 's/\*/\\\\*/g')"*\n"
+  fi
+  desc="$desc**Homepage:**\n<$pkg_url>\n"
+  for arch in $arches; do
+    bin_dir=$(echo "$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver/; s/\$arch/$arch/; s/\$pkgrel/$pkg_rel/")
+    if [ -d bin/$bin_dir ]; then
+      pkg_base=$pkg_name-$pkg_ver-$arch-$pkg_rel
+      desc="${desc}---\n\n**Package $arch:**\n>"
+      for ext in txz tgz md5 src dep sug con; do
+        [ -f "bin/$bin_dir/$pkg_base.$ext" ] && desc="$desc- <$pkgr_url/$bin_dir/$pkg_base.$ext>\n";
+      done
+      desc="$desc\n**Log $arch:**\n><$pkgr_url/$bin_dir/build-$pkg_base.log>\n\n**Buildscript and source $arch:**\n>- <$pkgr_url/$bin_dir/SLKBUILD>\n"
+      for f in $(find bin/$bin_dir -type f|sort); do
+        f=$(basename "$f")
+        echo "$f"|grep -q "^$pkg_base\.\|^build-$pkg_base\.log\|^SLKBUILD$" && continue
+        desc="${desc}- <$pkgr_url/$bin_dir/$f>\n"
+      done
+    fi
+  done
+  printf "\n----------\n${CGREEN}${desc}${CNONE}----------\n"
+  read_choice "\nPosting this" 'y n' 'y'
+  [ $READ_VALUE = y ] || return 0 # no error
+  base_url=https://sourceforge.net
+  ticket_uri=/p/salix/packages/
+  newticket_uri=/rest/p/salix/packages/new
+  ticket_id=$(cat <<EOF|python
+#!/bin/env python
+# coding: utf8
+import urllib
+import urllib2
+import json
+url='$base_url$newticket_uri'
+params = {
+  'access_token' : '$pkgr_token',
+  'ticket_form.summary' : '$pkg_name-$pkg_ver',
+  'ticket_form.status' : 'open',
+  'ticket_form.assigned_to' : '',
+  'ticket_form.labels' : '',
+  'ticket_form.custom_fields._type' : '$tickettype',
+  'ticket_form.custom_fields._importance' : '$importance',
+  'ticket_form.custom_fields._salix_version' : '$salix_ver',
+  'ticket_form.description' : """$desc""",
+}
+data = urllib.urlencode(params)
+resp = urllib2.urlopen(urllib2.Request(url, data))
+jsondata = json.loads(''.join(resp.readlines()))
+print(jsondata['ticket']['ticket_num'])
+EOF
+) || return 1
+  if [ -n "$ticket_id" ]; then
+    echo "Ticket posted: $base_url$ticket_uri$ticket_id/"
+    return 0
+  else
+    return 1
+  fi
 }
 
 opts=$(getopt -o 'hVclp:e:v:a::u:b:q:rt:i' -l 'help,version,check,prepare,install:,list-installed,remove:,register,create,pkg-list,pkg-info:,edit:,verify:,verify-all::,update:,build:,queue:,rsync,ticket:,interactive' -- "$@")
