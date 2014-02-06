@@ -1,0 +1,5 @@
+# vim: syn=sh ft=sh:
+version_pattern='sed -rn '\''/Latest version is/{s,.*Latest version is (.*),\\1,;p}'\'
+help_text="To be used with https://launchpad.net/PROJECT url."
+download_pattern=${dl_url}'/FIXME/${pkgver}/+download/${pkgname}-${pkgver}.tar.gz'
+

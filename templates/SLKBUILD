@@ -5,7 +5,7 @@ pkgname=@NAME@
 pkgver=@VER@
 pkgrel=@RLZ@@PTAG@
 @ARCHVAR@
-source=(@DLURL@/$pkgname-${pkgver}.tar.xz) # FIXME
+source=(@DLURL@) # FIXME
 sourcetemplate=@PURL@/@PSCHEMA@/
 docs=("readme" "install" "copying" "changelog" "authors" "news" "todo")
 url=@URL@

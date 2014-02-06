@@ -98,7 +98,7 @@ usage_ver_arch() {
 LXC should be filled in the form:
   version,arch
 Where 'version' could be '14.0', '14.1' for example
-And 'arch' could be 'i486' or 'x86_64'.
+And 'arch' could be 'i486' or 'x86_64' for example.
 EOF
 }
 check_ver_arch() {
@@ -195,10 +195,8 @@ read_choice() {
   case_insensitive="$4"
   [ -z "$case_insensitive" ] && case_insensitive=true
   if $case_insensitive; then
-    filterdef='tr a-z A-Z'
     filterval='tr A-Z a-z'
   else
-    filterdef='cat'
     filterval='cat'
   fi
   value=
@@ -207,7 +205,7 @@ read_choice() {
   for c in $choices; do
     $first || prompt="${prompt},"
     first=false
-    [ "$c" = "$def" ] && c=${CBOLD}$(echo "$c"|$filterdef)${CNONE}
+    [ "$c" = "$def" ] && c=${CBOLD}$(echo "$c"|sed 's/\$/*/')${CNONE}
     prompt="${prompt}${c}"
   done
   prompt="$prompt]? "
@@ -219,6 +217,7 @@ read_choice() {
     value=$(echo "$value"|$filterval)
     [ -n "$def" ] && [ -z "$value" ] && value="$def"
     for c in $choices; do
+      c=$(echo "$c"|$filterval)
       if [ "$value" = "$c" ]; then
         valid=true
         break
@@ -505,35 +504,40 @@ EOF
     read_info 'Download URL page' '' check_url || return 1
     pkg_dl_url="$READ_VALUE"
     pkg_check_schema=''
+    choices=''
+    for c in $(find templates/version -type f|sort); do
+      c=$(basename "$c")
+      choices="$choices $c"
+    done
     while [ -z "$pkg_check_schema" ]; do
-      read_choice "Latest version check schema.\nChoose from" 'sf_latest sf_folders sf_files github apache nginx googlecode launchpad md5sum custom help' 'sf_latest' || return 1
+      read_choice "Latest version check schema.\nChoose from" "$choices custom help" 'help' || return 1
       pkg_check_schema="$READ_VALUE"
-      pattern_sf_latest='grep -A1 "/files/latest/download"|sed -rn '\''/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\\1,;p}'\'
-      pattern_sf_folders='grep -B1 "Click to enter "|sed -rn '\''/href/{s,.*/([^/]+)/".*,\\1,;p}'\''|sort -rV'
-      pattern_sf_files='grep "Click to download "|sed -r '\''s,.*download .+-([^-]+)\.tar\.[bgx]z2?\".*,\\1,'\''|sort -rV'
-      pattern_github="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
-      pattern_apacheindex="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
-      pattern_nginxindex="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
-      pattern_googlecode="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
-      pattern_launchpad="md5sum|sed 's/  -//; s/^/MD5:/'" # TODO
-      pattern_md5sum="grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//; s/^/MD5:/'"
       case $pkg_check_schema in
-        sf_latest\|sf_folders\|sf_files\|github\|apacheindex\|nginxindex\|googlecode\|launchpad\|md5sum)
-          eval pkg_check_pattern=\$pattern_$pkg_check_schema
-          ;;
         custom)
           echo "A custom pattern is a filter on the HTML download page"
           echo "in order to find the latest stable version."
-          echo "Example for a sourceforge project named 'mysoft':"
-          echo "  grep 'FIXME'|sed -r 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -r -V|head -n 1"
+          echo "Example:"
+          echo "  sed -rn 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -rV"
           read_info 'Custom pattern' '' notnull || return 1
           pkg_check_pattern="$READ_VALUE"
           ;;
         help)
-          for p in sf_latest sf_folders sf_files github apache nginx googlecode launchpad md5sum; do
-            eval echo $p: \$pattern_$p
+          for p in $choices; do
+            . ./templates/version/$c
+            echo "$c: $version_pattern"
+            echo "    $help_text"
+            unset version_pattern
+            unset help_text
+            unset download_pattern
           done
           pkg_check_schema=''
+          ;;
+        *)
+          . ./templates/version/$pkg_check_schema
+          pkg_check_pattern=$version_pattern
+          unset version_pattern
+          unset help_text
+          unset download_pattern
           ;;
       esac
     done
@@ -632,7 +636,13 @@ store_package_build() {
   . $CFG_FILE
   pkg_arch=$(cat src/$pkg_name/arch)
   pkg_url=$(cat src/$pkg_name/url)
-  pkg_dl_url=$(cat src/$pkg_name/dlurl)
+  dl_url=$(cat src/$pkg_name/dlurl)
+  schema=$(cat src/$pkg_name/schema)
+  . ./templates/version/$schema
+  pkg_dl_url="$download_pattern"
+  unset version_pattern
+  unset help_text
+  unset download_pattern
   pkg_build_schema=$(cat src/$pkg_name/buildschema)
   pkgr_email_dot=$(echo "$pkgr_email"|sed -r 's/\./~dot~/g; s/@/~at~/g;')
   arch_var=''

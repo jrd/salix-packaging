@@ -1,0 +1,5 @@
+# vim: syn=sh ft=sh:
+version_pattern='grep "Click to download "|sed -r '\''s,.*download .+-([^-]+)\.tar\.[bgx]z2?\".*,\\1,'\''|sort -rV'
+help_text="To be used with SourceForge files url when the version are files in a directory."
+download_pattern=${dl_url}'/${pkgname}-${pkgver}.tar.gz'
+
