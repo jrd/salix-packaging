@@ -157,23 +157,23 @@ READ_VALUE=
 # The value is put in the global READ_VALUE variable
 # exit with error on ctrl+c
 read_info() {
-  prompt="$1"
-  def="$2"
-  check="$3"
-  [ -z "$check" ] && check=true
-  value=
-  [ -n "$def" ] && prompt="$prompt [$def]: " || prompt="$prompt: "
-  valid=false
+  _prompt="$1"
+  _def="$2"
+  _check="$3"
+  [ -z "$_check" ] && _check=true
+  _value=
+  [ -n "$_def" ] && _prompt="$_prompt [$_def]: " || _prompt="$_prompt: "
+  _valid=false
   trap 'printf "\nInterrupted\n";exit 2' 2 # will break on ctrl+c
-  while ! $valid; do
-    printf "$prompt"
-    read -r value # hopes the -r is portable enough
-    [ -n "$def" ] && [ -z "$value" ] && value="$def"
-    $check "$value" && valid=true
+  while ! $_valid; do
+    printf "$_prompt"
+    read -r _value # hopes the -r is portable enough
+    [ -n "$_def" ] && [ -z "$_value" ] && _value="$_def"
+    $_check "$_value" && _valid=true
   done
   trap 2 # restore normal behavior
-  if $valid; then
-    READ_VALUE=$value
+  if $_valid; then
+    READ_VALUE=$_value
     return 0
   else
     READ_VALUE=
@@ -189,44 +189,44 @@ read_info() {
 # The chosen value is put in the global READ_VALUE variable
 # exit with error on ctrl+c
 read_choice() {
-  prompt="$1"
-  choices="$2"
-  def="$3"
-  case_insensitive="$4"
-  [ -z "$case_insensitive" ] && case_insensitive=true
-  if $case_insensitive; then
-    filterval='tr A-Z a-z'
+  _prompt="$1"
+  _choices="$2"
+  _def="$3"
+  _case_insensitive="$4"
+  [ -z "$_case_insensitive" ] && _case_insensitive=true
+  if $_case_insensitive; then
+    _filterval='tr A-Z a-z'
   else
-    filterval='cat'
+    _filterval='cat'
   fi
-  value=
-  prompt="$prompt ["
-  first=true
-  for c in $choices; do
-    $first || prompt="${prompt},"
-    first=false
-    [ "$c" = "$def" ] && c=${CBOLD}$(echo "$c"|sed 's/\$/*/')${CNONE}
-    prompt="${prompt}${c}"
+  _value=
+  _prompt="$_prompt ["
+  _first=true
+  for _c in $_choices; do
+    $_first || _prompt="${_prompt},"
+    _first=false
+    [ "$_c" = "$_def" ] && _c=${CBOLD}$(echo "$_c"|sed 's/\$/*/')${CNONE}
+    _prompt="${_prompt}${_c}"
   done
-  prompt="$prompt]? "
-  valid=false
+  _prompt="$_prompt]? "
+  _valid=false
   trap 'printf "\nInterrupted\n";exit 2' 2 # will break on ctrl+c
-  while ! $valid; do
-    printf "$prompt"
-    read -r value # hopes the -r is portable enough
-    value=$(echo "$value"|$filterval)
-    [ -n "$def" ] && [ -z "$value" ] && value="$def"
-    for c in $choices; do
-      c=$(echo "$c"|$filterval)
-      if [ "$value" = "$c" ]; then
-        valid=true
+  while ! $_valid; do
+    printf "$_prompt"
+    read -r _value # hopes the -r is portable enough
+    _value=$(echo "$_value"|$_filterval)
+    [ -n "$_def" ] && [ -z "$_value" ] && _value="$_def"
+    for _c in $_choices; do
+      _c=$(echo "$_c"|$_filterval)
+      if [ "$_value" = "$_c" ]; then
+        _valid=true
         break
       fi
     done
   done
   trap 2 # restore normal behavior
-  if $valid; then
-    READ_VALUE=$value
+  if $_valid; then
+    READ_VALUE=$_value
     return 0
   else
     READ_VALUE=
@@ -416,7 +416,23 @@ action_install() {
     # script to install deps
     cat <<'EOF' > /var/lib/lxc/$name/rootfs/usr/local/sbin/installdeps
 #!/bin/sh
-/usr/sbin/slapt-get -u && /usr/sbin/slapt-get -i $(echo "$1"|tr ',' ' ')
+set -e
+if [ -n "$1" ]; then
+  /usr/sbin/slapt-get -u
+  pkgs=''
+  for p in $(echo "$1"|tr ',' ' '); do
+    if echo "$p" | grep -q '|'; then
+      for p2 in $(echo "$p"|tr '|' ' '); do
+        /usr/sbin/slapt-get --filelist $p2 > /dev/null && break
+        pkgs="$pkgs $p2"
+        break
+      done
+    else
+      pkgs="$pkgs $p"
+    fi
+  done
+  /usr/sbin/slapt-get -i $pkgs
+fi
 EOF
     chmod +x /var/lib/lxc/$name/rootfs/usr/local/sbin/installdeps
     if lxc-start -d -n $name; then
@@ -522,7 +538,8 @@ EOF
           pkg_check_pattern="$READ_VALUE"
           ;;
         help)
-          for p in $choices; do
+          for c in $choices; do
+            [ $c = custom ] && continue
             . ./templates/version/$c
             echo "$c: $version_pattern"
             echo "    $help_text"
@@ -963,7 +980,7 @@ action_queue() {
         cp -rv $src_dir/. ${lxc_root}${lxc_build}/
         lxc_ip=$(sed -rn '/lxc.network.ipv4[ =]/{s,.*= *(.+)/.*,\1,;p}' /var/lib/lxc/$lxc_name/config)
         if [ -n "$deps" ]; then
-          ssh -t root@$lxc_ip "installdeps $deps"
+          ssh -t root@$lxc_ip "installdeps '$deps'"
           if [ $? -ne 0 ]; then
             echo "${CLRED}Unable to install the dependencies for $pkg_name-$pkg_ver for $salix_ver-$salix_arch${CNONE}" >&2
             echo "Deps list: ${CRED}$deps${CNONE}" >&2
@@ -1003,7 +1020,7 @@ action_queue() {
           break
         fi
       done
-      if [ -z $(cat queue) ]; then
+      if [ -z "$(cat queue)" ]; then
         return 0
       else
         return 1
