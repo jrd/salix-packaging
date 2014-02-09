@@ -27,61 +27,61 @@ CWHITE="[38m"; CLWHITE="[38;1m"
 
 usage() {
   needroot="$CLRED*$CNONE"
-  implemented="$CLGREEN+$CNONE"
+  notimplemented="$CMAGENTA:'($CNONE"
   cat <<EOF
 Usage: salixPackaging [OPTIONS]
 Help a packager to manage his/her packages for Salix.
 
 Where OPTIONS are:
-  -h, --help $implemented
+  -h, --help
     This usage
-  -V, --version $implemented
+  -V, --version
     Show the version
-  --check $implemented
+  --check
     Sanity check of Host environment.
-  --prepare $needroot $implemented
+  --prepare $needroot
     Prepare the host to install LXC versions of Salix.
-  --register $implemented
+  --register
     Register your information as packager.
-  --install=VERSION,ARCH $needroot $implemented
+  --install=VERSION,ARCH $needroot
     Install a LXC version of Salix for the specified VERSION and ARCH. ARCH could be 'i486' or 'x86_64'.
-  --list-installed $implemented
+  --list-installed
     List all LXC Salix version installed.
-  --remove=VERSION,ARCH $needroot $implemented
+  --remove=VERSION,ARCH $needroot
     Remove a LXC Salix version.
-  -c, --create $implemented
+  -c, --create
     Create a new package.
-  -l, --pkg-list $implemented
+  -l, --pkg-list
     Show all packages and their state.
-  -p, --pkg-info=PACKAGE_NAME $implemented
+  -p, --pkg-info=PACKAGE_NAME
     Show some information about the PACKAGE_NAME.
-  -e, --edit=PACKAGE_NAME,PACKAGE_VER,VERSION $implemented
+  -e, --edit=PACKAGE_NAME,PACKAGE_VER,VERSION
     Edit a PACKAGE_NAME SLKBUILD file, version PACKAGE_VER, for Salix VERSION.
-  -v, --verify=PACKAGE_NAME,VERSION $implemented
+  -v, --verify=PACKAGE_NAME,VERSION
     Verify the latest stable version of the PACKAGE_NAME for the Salix VERSION.
-  -a, --verify-all [=PACKAGE_NAME] $implemented
+  -a, --verify-all [=PACKAGE_NAME]
     Verify the latest stable version on all packages. Will take some time.
-  -u, --update=PACKAGE_NAME,VERSION $implemented
+  -u, --update=PACKAGE_NAME,VERSION
     Update an already existing package for the Salix VERSION.
-  -b, --build=PACKAGE_NAME,PACKAGE_VER,VERSION,ARCH[,NUMJOBS] $implemented
+  -b, --build=PACKAGE_NAME,PACKAGE_VER,VERSION,ARCH[,NUMJOBS]
     Schedule to build PACKAGE_NAME, version PACKAGE_VER, for Salix version VERSION and ARCH.
     NUMJOBS indicate the number of processors/cores to use when building. Default 1.
     The build is appened to the queue.
-  -q, --queue=ACTION $implemented
+  -q, --queue=ACTION
     Manage the build queue. ACTION could be:
     - list list the queue
     - clear clear the queue
     - remove:POSITION1,POSITION2,… remove a build from the queue, POSITION could be a position or a range in the form 2-5.
     - run execute the builds in order from the queue. Each successful build is removed from the queue.
-  -r, --rsync $implemented
+  -r, --rsync
     Rsync the local repo to your remote one.
   -t, --ticket=PACKAGE_NAME,VERSION
     Create a ticket on Salix Tracker about PACKAGE_NAME and Salix VERSION for all built ARCH.
-  -i, --interactive
+  -i, --interactive $notimplemented
     Will enter an interactive mode if used with -l, -p, -v, -q. Creating a package (-c), editing a package (-e), and creating a ticket (-t) are always interactive.
 
   $needroot: root privileges required
-  $implemented: implemented so far
+  $notimplemented: not implemented yet
 EOF
 }
 
@@ -559,8 +559,17 @@ EOF
       esac
     done
     echo "Pattern: $pkg_check_pattern"
-    printf "Latest stable version found: "
-    pkg_ver=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern")
+    printf "Versions found: "
+    pkg_versions=$(find_all_versions "$pkg_dl_url" "$pkg_check_pattern")
+    echo "$pkg_versions"
+    read_choice "Allow betas versions" "y n" "n" || return 1
+    if [ $READ_VALUE = n ]; then
+      pkg_stable=true
+    else
+      pkg_stable=false
+    fi
+    printf "Latest version found: "
+    pkg_ver=$(find_latest_version "$pkg_versions" "$pkg_stable")
     echo $pkg_ver
     read_choice "Use this version" "y n" "y" || return 1
     if [ $READ_VALUE = n ]; then
@@ -576,7 +585,7 @@ EOF
     salix_ver_ref=''
     for salix_ver in $(find_installed_salix|cut -d- -f1|sort -u); do
       if [ -z "$salix_ver_ref" ]; then
-        store_package_info "$salix_ver" "$pkg_name" "$pkg_arch" "$pkg_url" "$pkg_dl_url" "$pkg_check_schema" "$pkg_check_pattern" "$pkg_md5" "$pkg_ver" "$pkg_fixver" "$pkg_build_schema"
+        store_package_info "$salix_ver" "$pkg_name" "$pkg_arch" "$pkg_url" "$pkg_dl_url" "$pkg_check_schema" "$pkg_check_pattern" "$pkg_md5" "$pkg_ver" "$pkg_stable" "$pkg_fixver" "$pkg_build_schema"
         salix_ver_ref="$salix_ver"
       else
         copy_package_build "$pkg_name" "$pkg_ver" "$salix_ver_ref" "$salix_ver" false
@@ -586,34 +595,49 @@ EOF
   return 0
 }
 
-# Find the latest version
-# Returns the version or "up to date" or "changed"
+# Find all versions
+# Returns versions separated by space. "up to date" or "changed" for md5 checks
 # $1 = URL to check
 # $2 = pattern for the URL
 # $3 = referenced md5sum
-# $4 = from stable versions only (true, by default) or from all versions (false)
-find_latest_version() {
-  url="$1"
-  pat="$2"
-  md5ref="$3"
-  stable="$4"
-  [ -z "$stable" ] && stable=true
-  filter=$(mktemp) # better than using eval I think.
-  echo '#!/bin/sh' > $filter
-  printf "$pat" >> $filter
-  $stable && printf "|grep -vi 'alpha\\|beta\\|m[0-9]\\|rc'" >> $filter
-  chmod +x $filter
-  ver=$(wget --no-check-certificate -q -O - "$url"|$filter|head -n1)
-  rm $filter
-  if echo "$ver"|grep -q '^MD5:'; then
-    md5=$(echo "$ver"|sed 's/MD5://')
-    if [ "$md5" = "$md5ref" ]; then
+find_all_versions() {
+  _url="$1"
+  _pat="$2"
+  _md5ref="$3"
+  _filter=$(mktemp) # better than using eval I think.
+  echo '#!/bin/sh' > $_filter
+  printf "$_pat" >> $_filter
+  chmod +x $_filter
+  _versions=$(wget --no-check-certificate -q -O - "$_url"|$_filter)
+  rm $_filter
+  if echo "$_versions"|grep -q '^MD5:'; then
+    _md5=$(echo "$_versions"|sed 's/MD5://')
+    if [ "$_md5" = "$_md5ref" ]; then
       echo "up to date"
     else
       echo "changed"
     fi
   else
-    echo "$ver"
+    echo "$_versions"
+  fi
+}
+
+# Find the latest version
+# Returns the version or "up to date" or "changed"
+# $1 = versions sorted in reveres order
+# $2 = from stable versions only (true, by default) or from all versions (false)
+find_latest_version() {
+  _versions="$1"
+  _stable="$2"
+  [ -z "$_stable" ] && _stable=true
+  if echo "$_versions"|grep -q "up to date\|changed"; then
+    echo "$_versions"
+  else
+    if $_stable; then
+      _versions=$(echo "$_versions"|grep -vi 'alpha\|beta\|m[0-9]\|rc')
+    fi
+    _ver=$(echo "$_versions"|head -n1)
+    echo "$_ver"
   fi
 }
 
@@ -627,6 +651,7 @@ store_package_info() {
   pkg_check_pattern="$1"; shift
   pkg_md5="$1"; shift
   pkg_ver="$1"; shift
+  pkg_stable="$1"; shift
   pkg_fixver="$1"; shift
   pkg_build_schema="$1"; shift
   mkdir -p src/$pkg_name/$salix_ver
@@ -640,6 +665,7 @@ store_package_info() {
     echo "$pkg_check_pattern" > pattern
     echo "$pkg_build_schema" > buildschema
     echo "$pkg_ver" > $salix_ver/version
+    echo "$pkg_stable" > $salix_ver/stable
     echo "$pkg_fixver" > $salix_ver/fixversion
   )
   store_package_build "$pkg_name" "$pkg_ver" "$salix_ver"
@@ -815,7 +841,9 @@ action_verify() {
   pkg_dl_url=$(cat src/$pkg_name/dlurl)
   pkg_check_pattern=$(cat src/$pkg_name/pattern)
   pkg_md5=$(cat src/$pkg_name/md5sum)
-  pkg_new_ver=$(find_latest_version "$pkg_dl_url" "$pkg_check_pattern" "$pkg_md5")
+  pkg_stable=$(cat src/$pkg_name/stable)
+  pkg_versions=$(find_all_versions "$pkg_dl_url" "$pkg_check_pattern" "$pkg_md5")
+  pkg_new_ver=$(find_latest_version "$pkg_versions" "$pkg_stable")
   pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
   pkg_fixver=$(cat src/$pkg_name/$salix_ver/fixversion)
   if [ "$pkg_ver" = "$pkg_new_ver" ]; then
