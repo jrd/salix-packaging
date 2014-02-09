@@ -123,7 +123,10 @@ download_salix() {
   fi
   grep -v '^kernel' $cache/CORE | sort > $cache/pkgs.lst
   grep -v '^kernel' $cache/SETTINGS | sort >> $cache/pkgs.lst
-  echo "kernel-headers" >> $cache/pkgs.lst # needed to compile. The error is not easy to understand so better include it here.
+  # add some packages needed to compile programs and not specified as dependencies
+  for p in kernel-headers bigreqsproto compositeproto damageproto dmxproto dri2proto fixesproto fontcacheproto fontsproto glproto inputproto kbproto printproto randrproto recordproto renderproto resourceproto scrnsaverproto videoproto xcb-proto xcmiscproto xextproto xf86bigfontproto xf86dgaproto xf86driproto xf86miscproto xf86vidmodeproto xineramaproto xproto; do
+    echo "$p" >> $cache/pkgs.lst
+  done
   rm -f $cache/CORE $cache/SETTINGS
   if [ "$arch" = "i486" ] || [ "$arch" = "x86_64" ]; then
     slackfolder=slackware
