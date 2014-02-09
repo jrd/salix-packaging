@@ -800,13 +800,15 @@ EOF
   for salix_ver in $(find src/$pkg_name -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
     salix_ver=$(basename "$salix_ver")
     pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
+    pkg_stable=$(cat src/$pkg_name/$salix_ver/stable)
     pkg_fixver=$(cat src/$pkg_name/$salix_ver/fixversion)
     echo ''
     echo "Versions for ${CLGREEN}${salix_ver}${CNONE}"
     salix_ver_underline=$(for i in $(seq 1 $(expr length "$salix_ver")); do printf '='; done)
     echo "=============$salix_ver_underline"
     echo "Current version=${CBOLD}${pkg_ver}${CNONE}"
-    echo "Version fixed?=${CBOLD}${pkg_fixver}${CNONE}"
+    echo "Stable only=${CBOLD}${pkg_stable}${CNONE}"
+    echo "Fixed version=${CBOLD}${pkg_fixver}${CNONE}"
     for v in $(find src/$pkg_name/$salix_ver -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
       v=$(basename "$v")
       rlz=$(sed -rn '/^pkgrel/{s/.*=([0-9]+).*/\1/;p}' src/$pkg_name/$salix_ver/$v/SLKBUILD)
