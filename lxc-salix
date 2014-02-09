@@ -123,6 +123,7 @@ download_salix() {
   fi
   grep -v '^kernel' $cache/CORE | sort > $cache/pkgs.lst
   grep -v '^kernel' $cache/SETTINGS | sort >> $cache/pkgs.lst
+  echo "kernel-headers" >> $cache/pkgs.lst # needed to compile. The error is not easy to understand so better include it here.
   rm -f $cache/CORE $cache/SETTINGS
   if [ "$arch" = "i486" ] || [ "$arch" = "x86_64" ]; then
     slackfolder=slackware
