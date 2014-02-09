@@ -681,8 +681,11 @@ store_package_build() {
   pkg_url=$(cat src/$pkg_name/url)
   dl_url=$(cat src/$pkg_name/dlurl)
   schema=$(cat src/$pkg_name/schema)
-  . ./templates/version/$schema
-  pkg_dl_url="$download_pattern"
+  pkg_dl_url=${dl_url}'/${pkgname}-${pkgver}.tar.gz'
+  if [ $schema != custom ]; then
+    . ./templates/version/$schema
+    pkg_dl_url="$download_pattern"
+  fi
   unset version_pattern
   unset help_text
   unset download_pattern
