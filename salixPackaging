@@ -698,11 +698,12 @@ store_package_build() {
   pkgr_schema_archprotected=$(echo "$pkgr_schema"|sed -r 's/\$arch/\\$arch/g;')
   pkgr_schema_protected=$(echo "$pkgr_schema_archprotected"|sed -r 's/\\/\\\\/g;')
   mkdir -p src/$pkg_name/$salix_ver/$pkg_ver
+  pkg_ver_slackware=$(echo $pkg_ver|sed -r 's/[-_]/./g') # Slackware does not allow hyphens or underscores in package version
   cat <<EOF|sed -f - templates/SLKBUILD > src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD
   s/@PNAME@/$pkgr_name/;
   s/@PEMAIL@/$pkgr_email_dot/;
   s/@NAME@/$pkg_name/;
-  s/@VER@/$pkg_ver/;
+  s/@VER@/$pkg_ver_slackware/;
   s/@RLZ@/1/;
   s/@PTAG@/$pkgr_tag/;
   s/@ARCHVAR@/$arch_var/;
@@ -1024,7 +1025,8 @@ action_queue() {
         ssh -t pkg@$lxc_ip "cd $lxc_build; LANG=en_US.utf8 numjobs=$numjobs fakeroot slkbuild -X"
         if [ $? -eq 0 ]; then
           pkg_rel=$(sed -rn '/^pkgrel/{s/.*=([0-9]+.*)/\1/;p}' ${lxc_root}${lxc_build}/SLKBUILD)
-          pkg_base_name=$pkg_name-$pkg_ver-$pkg_arch-$pkg_rel
+          pkg_ver_slackware=$(echo $pkg_ver|sed -r 's/[-_]/./g')
+          pkg_base_name=$pkg_name-$pkg_ver_slackware-$pkg_arch-$pkg_rel
           # create .dep, .sug and .con files if non empty
           for ext in dep sug con; do
             f=${lxc_root}${lxc_build}/$ext
@@ -1037,8 +1039,16 @@ action_queue() {
           rm -f ${lxc_root}${lxc_build}/makedep
           # add the package to the localrepo
           grep -q '/localrepo/' ${lxc_root}/etc/slapt-get/slapt-getrc || ssh -t root@$lxc_ip "localrepo -s"
-          ssh -t root@$lxc_ip "localrepo -a ${lxc_build}/$pkg_base_name.txz"
-          bin_dir=$(echo "bin/$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver/; s/\$arch/$pkg_arch/; s/\$pkgrel/$pkg_rel/")
+          pkg_ext=
+          for ext in txz tgz; do
+            if [ -e ${lxc_root}${lxc_build}/$pkg_base_name.$ext ]; then
+              pkg_ext=$ext
+              break
+            fi
+          done
+          [ -n "$pkg_ext" ] || return 1
+          ssh -t root@$lxc_ip "localrepo -a ${lxc_build}/$pkg_base_name.$pkg_ext"
+          bin_dir=$(echo "bin/$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver_slackware/; s/\$arch/$pkg_arch/; s/\$pkgrel/$pkg_rel/")
           mkdir -p $bin_dir
           cp -rv ${lxc_root}${lxc_build}/. $bin_dir/
           echo "${CLGREEN}Package $pkg_name-$pkg_ver building DONE for $salix_ver-$salix_arch${CNONE}"
@@ -1091,6 +1101,7 @@ action_ticket() {
   salix_ver="$2"
   [ -d src/$pkg_name/$salix_ver ] || return 1
   pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
+  pkg_ver_slackware=$(echo $pkg_ver|sed -r 's/[-_]/./g')
   pkg_rel=$(sed -rn '/^pkgrel/{s/.*=([0-9]+.*)/\1/;p}' src/$pkg_name/$salix_ver/$pkg_ver/SLKBUILD)
   pkg_url=$(cat src/$pkg_name/url)
   pkg_arch=$(cat src/$pkg_name/arch)
@@ -1112,9 +1123,9 @@ action_ticket() {
   fi
   desc="$desc**Homepage:**\n<$pkg_url>\n"
   for arch in $arches; do
-    bin_dir=$(echo "$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver/; s/\$arch/$arch/; s/\$pkgrel/$pkg_rel/")
+    bin_dir=$(echo "$pkgr_schema"|sed "s/\$pkgname/$pkg_name/; s/\$pkgver/$pkg_ver_slackware/; s/\$arch/$arch/; s/\$pkgrel/$pkg_rel/")
     if [ -d bin/$bin_dir ]; then
-      pkg_base=$pkg_name-$pkg_ver-$arch-$pkg_rel
+      pkg_base=$pkg_name-$pkg_ver_slackware-$arch-$pkg_rel
       desc="${desc}---\n\n**Package $arch:**\n>"
       for ext in txz tgz md5 src dep sug con; do
         [ -f "bin/$bin_dir/$pkg_base.$ext" ] && desc="$desc- <$pkgr_url/$bin_dir/$pkg_base.$ext>\n";
