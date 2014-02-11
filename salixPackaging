@@ -1081,7 +1081,7 @@ action_rsync() {
   mkdir remote
   if sshfs -o uid=$(id -u) -o gid=$(id -g) "$pkgr_scpuri" remote; then
     echo "Connection ok, Synchronizing..."
-    rsync -rv --del --size-only bin/ remote
+    rsync -rvh --inplace --del --times --progress --stats bin/ remote
     sync
     sleep 1
     fusermount -u remote
