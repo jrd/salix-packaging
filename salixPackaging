@@ -146,6 +146,10 @@ check_root() {
   fi
 }
 
+check_net_device() {
+  [ -d /sys/class/net/"$1" ] && [ $(cat /sys/class/net/"$1"/type) -lt 256 ]
+}
+
 notnull() {
   [ -n "$1" ]
 }
@@ -243,7 +247,7 @@ action_check() {
     echo "LXC: $fail"
     return 1
   fi
-  echo -n "Arch: "
+  printf "Arch: "
   if [ $(uname -m) = x86_64 ]; then
     echo "$ok"
   else
@@ -252,7 +256,15 @@ action_check() {
     echo "Please, run a Salix 64bits to make packages." >&2
     return 1
   fi
-  echo -n "rc.local: "
+  printf "bridge utils: "
+  if /usr/sbin/brctl --help >/dev/null 2>&1; then
+    echo "$ok"
+  else
+    echo "$fail"
+    echo "brctl could not be found, please install bridge-utils." >&2
+    return 1
+  fi
+  printf "rc.local: "
   if grep -q lxcbr0 /etc/rc.d/rc.local; then
     echo "$ok"
   else
@@ -261,7 +273,7 @@ action_check() {
     echo "Please, launch the prepare action." >&2
     return 1
   fi
-  echo -n "Bridge: "
+  printf "Bridge: "
   if ifconfig|grep -q 'lxcbr0:'; then
     echo "$ok"
   else
@@ -275,7 +287,7 @@ action_check() {
 
 action_prepare() {
   check_root
-  read_info "What is your Internet device (wlan0 or eth0 for example)" '' "sh -c '[ -e /dev/\$1 ]' --"
+  read_info "What is your Internet device (wlan0 or eth0 for example)" '' check_net_device
   extIface=$READ_VALUE
   cat <<EOF >> /etc/rc.d/rc.local
 # salixPackaging
@@ -372,7 +384,7 @@ check_scp_uri() {
 }
 
 check_registered() {
-  if [ ! -r $CFG_FILE ]; then
+  if [ ! -r "$CFG_FILE" ] || ! grep -q pkgr_name $CFG_FILE; then
     echo "You should first register as a packager." >&2
     exit 1
   fi
@@ -411,7 +423,7 @@ action_install() {
       fi
     done
     # local repository
-    wget -O /var/lib/lxc/$name/rootfs/usr/local/sbin/localrepo "$LOCALREPO_URL"
+    wget -q -O /var/lib/lxc/$name/rootfs/usr/local/sbin/localrepo "$LOCALREPO_URL"
     chmod +x /var/lib/lxc/$name/rootfs/usr/local/sbin/localrepo
     # script to install deps
     cat <<'EOF' > /var/lib/lxc/$name/rootfs/usr/local/sbin/installdeps
@@ -437,6 +449,7 @@ EOF
     chmod +x /var/lib/lxc/$name/rootfs/usr/local/sbin/installdeps
     if lxc-start -d -n $name; then
       echo "LXC started."
+      sleep 3 # ensure all is started in the container
       chroot /var/lib/lxc/$name/rootfs /usr/local/sbin/localrepo -c
       return 0
     else
@@ -580,7 +593,7 @@ EOF
       pkg_fixver=false
     fi
     pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//')
-    read_choice "Build schema" 'configure perl python waf' 'configure' || return 1
+    read_choice "Build schema" "$(for f in templates/build/*; do basename $f; done)" 'configure' || return 1
     pkg_build_schema="$READ_VALUE"
     salix_ver_ref=''
     for salix_ver in $(find_installed_salix|cut -d- -f1|sort -u); do
@@ -1079,6 +1092,7 @@ action_queue() {
 action_rsync() {
   . $CFG_FILE
   mkdir remote
+  trap 'fusermount -u remote;rmdir remote;exit 2' 2 # Ctrl+C
   if sshfs -o uid=$(id -u) -o gid=$(id -g) "$pkgr_scpuri" remote; then
     echo "Connection ok, Synchronizing..."
     rsync -rvh --inplace --del --times --progress --stats bin/ remote

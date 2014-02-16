@@ -1,0 +1,5 @@
+  cd $SRC/$pkgname-$pkgver || return 1
+  mkdir build && cd build || return 1
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr || return 1 
+  make -j $numjobs || return 1
+  make install DESTDIR=$PKG || return 1
