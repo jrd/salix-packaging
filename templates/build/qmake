@@ -1,0 +1,4 @@
+  cd $SRC/$pkgname-$pkgver || return 1
+  qmake || return 1
+  make -j $numjobs || return 1
+  make install DESTDIR=$PKG || return 1

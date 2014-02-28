@@ -360,7 +360,9 @@ EOF
 
 check_url() {
   url="$1"
-  if ! wget --no-check-certificate -O /dev/null -q "$url"; then
+  if [ "$url" = 'SKIP' ]; then
+    echo 'Skipping'
+  elif ! wget --no-check-certificate -O /dev/null -q "$url"; then
     echo "$url is not valid" >&2
     false
   fi
@@ -528,71 +530,84 @@ EOF
   else
     read_choice 'Package architectures' 'all noarch arm i486 x86_64' 'all'
     pkg_arch="$READ_VALUE"
-    read_info 'Home page' '' check_url || return 1
-    pkg_url="$READ_VALUE"
-    read_info 'Download URL page' '' check_url || return 1
-    pkg_dl_url="$READ_VALUE"
-    pkg_check_schema=''
-    choices=''
-    for c in $(find templates/version -type f|sort); do
-      c=$(basename "$c")
-      choices="$choices $c"
-    done
-    while [ -z "$pkg_check_schema" ]; do
-      read_choice "Latest version check schema.\nChoose from" "$choices custom help" 'help' || return 1
-      pkg_check_schema="$READ_VALUE"
-      case $pkg_check_schema in
-        custom)
-          echo "A custom pattern is a filter on the HTML download page"
-          echo "in order to find the latest stable version."
-          echo "Example:"
-          echo "  sed -rn 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -rV"
-          read_info 'Custom pattern' '' notnull || return 1
-          pkg_check_pattern="$READ_VALUE"
-          ;;
-        help)
-          for c in $choices; do
-            [ $c = custom ] && continue
-            . ./templates/version/$c
-            echo "$c: $version_pattern"
-            echo "    $help_text"
-            unset version_pattern
-            unset help_text
-            unset download_pattern
-          done
-          pkg_check_schema=''
-          ;;
-        *)
-          . ./templates/version/$pkg_check_schema
-          pkg_check_pattern=$version_pattern
-          unset version_pattern
-          unset help_text
-          unset download_pattern
-          ;;
-      esac
-    done
-    echo "Pattern: $pkg_check_pattern"
-    printf "Versions found: "
-    pkg_versions=$(find_all_versions "$pkg_dl_url" "$pkg_check_pattern")
-    echo "$pkg_versions"
-    read_choice "Allow betas versions" "y n" "n" || return 1
-    if [ $READ_VALUE = n ]; then
-      pkg_stable=true
+    read_info 'Home page (SKIP to skip)' '' check_url || return 1
+    [ "$READ_VALUE" != 'SKIP' ] && pkg_url="$READ_VALUE"
+    read_info 'Download URL page (SKIP to skip)' '' check_url || return 1
+    [ "$READ_VALUE" != 'SKIP' ] && pkg_dl_url="$READ_VALUE"
+    if [ -n "$pkg_dl_url" ]; then
+      pkg_check_schema=''
+      choices=''
+      for c in $(find templates/version -type f|sort); do
+        c=$(basename "$c")
+        choices="$choices $c"
+      done
+      while true; do
+        while [ -z "$pkg_check_schema" ]; do
+          read_choice "Latest version check schema.\nChoose from" "$choices custom help" 'help' || return 1
+          pkg_check_schema="$READ_VALUE"
+          case $pkg_check_schema in
+            custom)
+              echo "A custom pattern is a filter on the HTML download page"
+              echo "in order to find the latest stable version."
+              echo "Example:"
+              echo "  sed -rn 'FIXME'|grep -v 'alpha\|beta\|rc'|sort -rV"
+              read_info 'Custom pattern' '' notnull || return 1
+              pkg_check_pattern="$READ_VALUE"
+              ;;
+            help)
+              for c in $choices; do
+                [ $c = custom ] && continue
+                . ./templates/version/$c
+                echo "$c: $version_pattern"
+                echo "    $help_text"
+                unset version_pattern
+                unset help_text
+                unset download_pattern
+              done
+              pkg_check_schema=''
+              ;;
+            *)
+              . ./templates/version/$pkg_check_schema
+              pkg_check_pattern=$version_pattern
+              unset version_pattern
+              unset help_text
+              unset download_pattern
+              ;;
+          esac
+        done
+        echo "Pattern: $pkg_check_pattern"
+        printf "Versions found: "
+        pkg_versions=$(find_all_versions "$pkg_dl_url" "$pkg_check_pattern")
+        echo "$pkg_versions"
+        read_choice "Pattern ok" "y n" "y" || return 1
+        [ $READ_VALUE = y ] && break;
+      done
+      read_choice "Allow betas versions" "y n" "n" || return 1
+      if [ $READ_VALUE = n ]; then
+        pkg_stable=true
+      else
+        pkg_stable=false
+      fi
+      printf "Latest version found: "
+      pkg_ver=$(find_latest_version "$pkg_versions" "$pkg_stable")
+      echo $pkg_ver
+      read_choice "Use this version" "y n" "y" || return 1
+      if [ $READ_VALUE = n ]; then
+        read_info "Then, which specific version" "$pkg_ver" notnull || return 1
+        pkg_ver="$READ_VALUE"
+        pkg_fixver=true
+      else
+        pkg_fixver=false
+      fi
+      pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//')
     else
+      pkg_check_schema='custom'
+      pkg_check_pattern=''
+      pkg_md5=''
+      pkg_ver=''
       pkg_stable=false
-    fi
-    printf "Latest version found: "
-    pkg_ver=$(find_latest_version "$pkg_versions" "$pkg_stable")
-    echo $pkg_ver
-    read_choice "Use this version" "y n" "y" || return 1
-    if [ $READ_VALUE = n ]; then
-      read_info "Then, which specific version" "$pkg_ver" notnull || return 1
-      pkg_ver="$READ_VALUE"
       pkg_fixver=true
-    else
-      pkg_fixver=false
     fi
-    pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//')
     read_choice "Build schema" "$(for f in templates/build/*; do basename $f; done)" 'configure' || return 1
     pkg_build_schema="$READ_VALUE"
     salix_ver_ref=''
@@ -770,22 +785,166 @@ copy_package_ver_build() {
   echo "Information for package ${CGREEN}${pkg_name}$CNONE has been stored in version ${CGREEN}${pkg_newver}${CNONE}, for Salix $salix_ver."
 }
 
+# $1 = text
+# $2 = start pos (could be empty for 0)
+# $3 = end pos (could be empty for EOL)
+center_text() {
+  _text="$1"
+  _x0="$2"
+  [ -n "$_x0" ] || _x0=0
+  _x1="$3"
+  [ -n "$_x1" ] || _x1=$(tput cols)
+  _text2=$(printf "$_text"|sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g") # remove color codes to compute length
+  _s=$(expr length "$_text2")
+  if [ $(( $_x1 - $_x0 )) -gt $_s ]; then
+    _pos=$(( ($_x1 + $_x0 - $_s) / 2 ))
+    tput hpa $_pos
+  else
+    tput hpa $_x0
+  fi
+  printf "$_text"
+}
+
+# $1 = character to repeat
+# $2 = number of repetition
+rep_char() {
+  printf "%${2}s"|sed "s/ /$1/g"
+}
+
+# $1 = lines, separated by newlines, each column separated be a coma (CSV)
+# $2 = headers, CSV format
+# $3 = columns colors, CSV format. Each color is specified as ANSI
+# $4 = columns minimum size, CSV format. Each size is specified as a positive number, following by a * to indicate it can grow or not.
+# $5 = title
+# $6 = prompt
+# $7 = actions possible character/action.
+# return the choosen action in CHOOSEN_ACTION variable
+CHOOSEN_ACTION=''
+show_interactive_list() {
+  lines="$1"
+  headers="$2"
+  colcolors="$3"
+  colsizes="$4"
+  title="$5"
+  prompt="$6"
+  actions="$7"
+  CHOOSEN_ACTION=''
+  tput reset
+  TCOLS=$(tput cols)
+  TLINES=$(tput lines)
+  center_text "$title\n"
+  n=$((1+$(printf -- "$headers"|sed 's/[^,]//g'|wc -m)))
+  varsizes=''
+  sum=1
+  realsizes=$(printf "$colsizes"|sed 's/\*//g'|tr ',' "\n") # one on each line
+  for i in $(seq $n); do
+    colsize=$(printf -- "$colsizes"|cut -d, -f$i)
+    if echo "$colsize"|grep -q '*'; then
+      varsizes="$varsizes $i"
+      colsize=$(printf "$colsize"|sed 's/\*$//')
+    fi
+    sum=$(($sum + $colsize + 1)) # 1 = sep
+  done
+  while [ $TCOLS -gt $sum ]; do
+    for i in $varsizes; do
+      size=$(printf "$realsizes"|sed -n "${i}p")
+      size=$(($size + 1))
+      realsizes=$(printf "$realsizes"|sed "${i}s/.*/$size/")
+      sum=$(($sum + 1))
+      [ $TCOLS -gt $sum ] || break
+    done
+  done
+  pos=0
+  printf "┌"
+  for i in $(seq $n); do
+    colsize=$(printf -- "$realsizes"|sed -n "${i}p")
+    if [ $i -ne 1 ]; then
+      tput hpa $pos
+      printf "┬"
+    fi
+    pos=$(($pos + 1))
+    printf "$(rep_char '─' $colsize)"
+    pos=$(($pos + $colsize))
+  done
+  printf "┐\n"
+  pos=0
+  for i in $(seq $n); do
+    h=$(printf -- "$headers"|cut -d, -f$i)
+    colcolor=$(printf -- "$colcolors"|cut -d, -f$i)
+    colsize=$(printf -- "$realsizes"|sed -n "${i}p")
+    tput hpa $pos
+    printf "│"
+    center_text "$colcolor$h$(tput sgr0)" $(($pos + 1)) $(($pos + 1 + $colsize))
+    pos=$(($pos + 1 + $colsize))
+  done
+  printf "│\n"
+  pos=0
+  printf "├"
+  for i in $(seq $n); do
+    colsize=$(printf -- "$realsizes"|sed -n "${i}p")
+    if [ $i -ne 1 ]; then
+      tput hpa $pos
+      printf "┼"
+    fi
+    pos=$(($pos + 1))
+    printf "$(rep_char '─' $colsize)"
+    pos=$(($pos + $colsize))
+  done
+  printf "┤\n"
+  from=1
+  to=$(($TLINES - 6))
+  nb=$(printf "$lines"|wc -l)
+  [ $to -gt $nb ] && to=$nb
+  l=$from
+  printf "$lines"|sed -n "$from,$to{p}"|while read line; do
+    l=$(($l + 1))
+    pos=0
+    for i in $(seq $n); do
+      cell=$(printf -- "$line"|cut -d, -f$i)
+      colcolor=$(printf -- "$colcolors"|cut -d, -f$i)
+      colsize=$(printf -- "$realsizes"|sed -n "${i}p")
+      tput hpa $pos
+      printf "│"
+      printf "$colcolor$cell"
+      tput sgr0
+      pos=$(($pos + 1 + $colsize))
+    done
+    tput hpa $TCOLS
+    printf "│\n"
+  done
+  pos=0
+  printf "└"
+  for i in $(seq $n); do
+    colsize=$(printf -- "$realsizes"|sed -n "${i}p")
+    if [ $i -ne 1 ]; then
+      tput hpa $pos
+      printf "┴"
+    fi
+    pos=$(($pos + 1))
+    printf "$(rep_char '─' $colsize)"
+    pos=$(($pos + $colsize))
+  done
+  printf "┘\n"
+  printf -- "$prompt\n"
+}
+
 action_pkglist() {
   packages=''
   for p in $(find src -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
     p=$(basename "$p")
-    salixes=''
     for s in $(find src/$p -mindepth 1 -maxdepth 1 -type d -not -name '.*'|sort); do
-      salixes="$salixes,$(basename $s)"
+      v=$(cat $s/version)
+      packages=$(printf "$packages\n$p,$v,$(basename $s)")
     done
-    salixes=$(echo "$salixes"|sed 's/^,//')
-    packages="$packages\n$p $salixes"
   done
-  packages=$(printf "$packages"|sed '1d')
+  packages=$(printf "$packages"|sed 1d)
   if [ $INTERACTIVE -gt 0 ]; then
-    echo Interactive mode # TODO
+    show_interactive_list "$packages" "Package,Version,Salix" "$(tput setaf 4),$(tput setaf 2),$(tput setaf 3)" "20*,20,5" "Packages" "H for Help" 'hq'
+    echo choosen=$CHOOSEN_ACTION
   else
-    printf "$packages\n"
+    for pkg in $packages; do
+      echo "$pkg"|sed -r 's/^([^,]+),([^,]+),(.*)/\1 - \2 (\3)/;'
+    done
   fi
   return 0
 }
