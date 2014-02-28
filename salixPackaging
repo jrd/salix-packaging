@@ -75,8 +75,9 @@ Where OPTIONS are:
     - run execute the builds in order from the queue. Each successful build is removed from the queue.
   -r, --rsync
     Rsync the local repo to your remote one.
-  -t, --ticket=PACKAGE_NAME,VERSION
+  -t, --ticket=PACKAGE_NAME,VERSION TICKET_NUMBER
     Create a ticket on Salix Tracker about PACKAGE_NAME and Salix VERSION for all built ARCH.
+    If TICKET_NUMBER is specified, add it as a comment on that ticket rather than creating a new one.
   -i, --interactive $notimplemented
     Will enter an interactive mode if used with -l, -p, -v, -q. Creating a package (-c), editing a package (-e), and creating a ticket (-t) are always interactive.
 
@@ -1272,6 +1273,7 @@ action_rsync() {
 action_ticket() {
   pkg_name="$1"
   salix_ver="$2"
+  ticket_id="$3"
   [ -d src/$pkg_name/$salix_ver ] || return 1
   pkg_ver=$(cat src/$pkg_name/$salix_ver/version)
   pkg_ver_slackware=$(echo $pkg_ver|sed -r 's/[-_]/./g')
@@ -1284,10 +1286,12 @@ action_ticket() {
     arches="$pkg_arch"
   fi
   . $CFG_FILE
-  read_choice "Ticket Type" 'New Upgrade Rebuild Transfer' 'New' false || return 1
-  tickettype="$READ_VALUE"
-  read_choice "Importance" 'Trivial  Minor  Normal  Major  Critical' 'Normal' false || return 1
-  importance="$READ_VALUE"
+  if [ -z "$ticket_id" ]; then
+    read_choice "Ticket Type" 'New Upgrade Rebuild Transfer' 'New' false || return 1
+    tickettype="$READ_VALUE"
+    read_choice "Importance" 'Trivial  Minor  Normal  Major  Critical' 'Normal' false || return 1
+    importance="$READ_VALUE"
+  fi
   read_info "Short message" '' true || return 1
   message="$READ_VALUE"
   desc=''
@@ -1312,12 +1316,17 @@ action_ticket() {
     fi
   done
   printf "\n----------\n${CGREEN}${desc}${CNONE}----------\n"
-  read_choice "\nPosting this" 'y n' 'y'
+  if [ -z "$ticket_id" ]; then
+    read_choice "\nPosting this" 'y n' 'y'
+  else
+    read_choice "\nAdding this to $ticket_id" 'y n' 'y'
+  fi
   [ $READ_VALUE = y ] || return 0 # no error
   base_url=https://sourceforge.net
   ticket_uri=/p/salix/packages/
-  newticket_uri=/rest/p/salix/packages/new
-  ticket_id=$(cat <<EOF|python
+  if [ -z "$ticket_id" ]; then
+    newticket_uri=/rest/p/salix/packages/new
+    ticket_id=$(cat <<EOF|python
 #!/bin/env python
 # coding: utf8
 import urllib
@@ -1341,6 +1350,35 @@ jsondata = json.loads(''.join(resp.readlines()))
 print(jsondata['ticket']['ticket_num'])
 EOF
 ) || return 1
+  else
+    infoticket_uri=/rest/p/salix/packages/$ticket_id
+    thread_id=$(cat <<EOF|python
+#!/bin/env python
+# coding: utf8
+import urllib
+import urllib2
+import json
+url='$base_url$infoticket_uri'
+resp = urllib2.urlopen(urllib2.Request(url))
+jsondata = json.loads(''.join(resp.readlines()))
+print(jsondata['ticket']['discussion_thread']['_id'])
+EOF
+) || return 1
+    postticket_uri=/rest/p/salix/packages/_discuss/thread/$thread_id/new
+    cat <<EOF|python || return 1
+#!/bin/env python
+# coding: utf8
+import urllib
+import urllib2
+url='$base_url$postticket_uri'
+params = {
+  'access_token' : '$pkgr_token',
+  'text' : """$desc""",
+}
+data = urllib.urlencode(params)
+resp = urllib2.urlopen(urllib2.Request(url, data))
+EOF
+  fi
   if [ -n "$ticket_id" ]; then
     echo "Ticket posted: $base_url$ticket_uri$ticket_id/"
     return 0
@@ -1510,6 +1548,7 @@ else
     # fix for optional args with getopt
     shift # remove "--"
     [ $ACTION = verifyall ] && [ -n "$1" ] && PARAM1="$1"
+    [ $ACTION = ticket ] && [ -n "$1" ] && PARAM3="$1"
     if ! action_$ACTION $PARAM1 $PARAM2 $PARAM3 $PARAM4 $PARAM5; then
       echo "An error occured while processing action ${CLRED}$ACTION" $PARAM1 $PARAM2 $PARAM3 $PARAM4 $PARAM5 $CNONE >&2
       exit 1
