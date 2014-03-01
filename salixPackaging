@@ -602,10 +602,11 @@ EOF
       fi
       pkg_md5=$(wget --no-check-certificate -q -O - "$pkg_dl_url"|grep '<a href'|grep -v 'http://'|md5sum|sed 's/  -//')
     else
+      read_info "Version" '' notnull || return 1
+      pkg_ver="$READ_VALUE"
       pkg_check_schema='custom'
       pkg_check_pattern=''
       pkg_md5=''
-      pkg_ver=''
       pkg_stable=false
       pkg_fixver=true
     fi
