@@ -199,14 +199,15 @@ installpkg() {
     ipkg_log="$ipkg_root/var/log"
     for PKGDBDIR in packages removed_packages removed_scripts scripts setup ; do
       if [ ! -d $ipkg_log/$PKGDBDIR ]; then
-        rm -rf $ipkg_log/$PKGDBDIR # make sure it's not a symlink or something stupid
+        rm -rf $ipkg_log/$PKGDBDIR # make sure it is not a symlink or something stupid
         mkdir -p $ipkg_log/$PKGDBDIR
         chmod 755 $ipkg_log/$PKGDBDIR 
       fi
     done
     echo "PACKAGE NAME:     $ipkg_shortname" > $ipkg_log/packages/$ipkg_shortname
     echo "COMPRESSED PACKAGE SIZE:     $ipkg_compressed" >> $ipkg_log/packages/$ipkg_shortname
-    echo "UNCOMPRESSED PACKAGE SIZE:     not-computed" >> $ipkg_log/packages/$ipkg_shortname
+    # uncompressed size not known, but that is not very important here.
+    echo "UNCOMPRESSED PACKAGE SIZE:     $ipkg_compressed" >> $ipkg_log/packages/$ipkg_shortname
     echo "PACKAGE LOCATION: $ipkg_pkg" >> $ipkg_log/packages/$ipkg_shortname
     echo "PACKAGE DESCRIPTION:" >> $ipkg_log/packages/$ipkg_shortname
     if [ -e install/slack-desc ]; then
