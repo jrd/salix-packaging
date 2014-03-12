@@ -515,6 +515,15 @@ fi
   
   def find_installed_salix(self):
     return [l for l in get_exec("lxc-ls -1|sed -rn '/^salixpkg-/{s/^salixpkg-//;p}'|sort").split("\n") if l]
+  def list_salix_versions(self):
+    """
+    Only list Salix versions, disregarding the arch.
+    """
+    lst = []
+    for salix_ver in [lxc.split('-', 2)[0] for lxc in self.find_installed_salix()]:
+      if salix_ver not in lst:
+        lst.append(salix_ver)
+    return lst
   def check_numlxc(self):
     if not self.find_installed_salix():
       print("You should first install a Salix LXC version.", file = sys.stderr)
@@ -545,7 +554,7 @@ Package creation
       # Package already exists so we must just ask to create it for missing LXC Salix version
       already = []
       new = []
-      for salix_ver in [lxc.split('-', 2)[0] for lxc in self.find_installed_salix()]:
+      for salix_ver in self.list_salix_versions():
         if os.path.exists('src/{name}/{sver}'.format(name = pkg_name, sver = salix_ver)):
           already.append(salix_ver)
         else:
@@ -616,7 +625,7 @@ Example:
         pkg_fixver = True
       pkg_build_schema = read_choice('Build schema', [os.path.basename(f) for f in glob('templates/build/*')], 'configure')
       salix_ver_ref = ''
-      for salix_ver in [lxc.split('-', 2)[0] for lxc in self.find_installed_salix()]:
+      for salix_ver in self.list_salix_versions():
         if salix_ver_ref:
           self.copy_package_build(pkg_name, pkg_ver, salix_ver_ref, salix_ver, False)
         else:
