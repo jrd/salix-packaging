@@ -914,9 +914,13 @@ Fixed version={cbold}{fixver}{cnone}""".format(sver = salix_ver, underline = '='
     makedep = 'src/{0}/{1}/{2}/makedep'.format(pkg_name, salix_ver, pkg_ver)
     dep = 'src/{0}/{1}/{2}/dep'.format(pkg_name, salix_ver, pkg_ver)
     if os.path.exists(makedep):
-      deps = cat(makedep).split(',')
+      strdep = cat(makedep)
+      if strdep:
+        deps.extend(strdep.split(','))
     if os.path.exists(dep):
-      deps.extend(cat(dep).split(','))
+      strdep = cat(dep)
+      if strdep:
+        deps.extend(strdep.split(','))
     with open('queue', 'a') as f:
       f.write('{0},{1},{2},{3},{4},{5}\n'.format(pkg_name, pkg_ver, salix_ver, salix_arch, numjobs, ','.join(deps)))
     print('{0}-{1} for {2}-{3} added to the queue.'.format(pkg_name, pkg_ver, salix_ver, salix_arch))
@@ -967,7 +971,10 @@ Fixed version={cbold}{fixver}{cnone}""".format(sver = salix_ver, underline = '='
       src_dir = 'src/{0}/{1}/{2}'.format(pkg_name, salix_ver, pkg_ver)
       print("\n{clcyan}Building {pkg_name}-{pkg_ver} for {salix_ver}-{salix_arch}...{cnone}".format(pkg_name = pkg_name, pkg_ver = pkg_ver, salix_ver = salix_ver, salix_arch = salix_arch, clcyan = Colors.lcyan, cnone = Colors.none))
       # remove old build if any
-      shutil.rmtree(lxc_root + lxc_build)
+      try:
+        shutil.rmtree(lxc_root + lxc_build)
+      except:
+        pass
       os.makedirs(lxc_root + lxc_build)
       copytree(src_dir, lxc_root + lxc_build)
       lxc_ip = re.search(r'lxc\.network\.ipv4 *= *(.+)/.+', cat('/var/lib/lxc/{0}/config'.format(lxc_name))).group(1)
