@@ -727,7 +727,7 @@ Example:
     arch_var = ''
     if pkg_arch != 'all':
       arch_var = 'arch={arch}'.format(arch = pkg_arch)
-    pkgr_schema_protected = self.pkgr_schema.replace('$arch', '\\$arch').replace('\\', r'\\\\')
+    pkgr_schema_protected = self.pkgr_schema.replace('\\', '\\\\').replace('$arch', r'\$arch')
     os.makedirs('src/{name}/{sver}/{ver}'.format(name = pkg_name, sver = salix_ver, ver = pkg_ver))
     pkg_ver_slackware = re.sub(r'[-_]', r'.', pkg_ver) # Slackware does not allow hyphens or underscores in package version
     tpl = cat('templates/SLKBUILD')
