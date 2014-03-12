@@ -1040,7 +1040,7 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
       files = []
       for root, dirnames, filenames in os.walk(os.path.join('bin', item)):
         files.extend(map(lambda fn: os.path.join(root, fn), [f for f in filenames if not f[0] == '.']))
-      DeDup(use_time = False, use_name = True).deduplicate(files)
+      DeDup(linktype = 'soft', use_time = False).deduplicate(files)
 
   def action_rsync(self):
     self.read_config()
@@ -1049,7 +1049,7 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
     try:
       if execute('sshfs -o uid=$(id -u) -o gid=$(id -g) "{0}" remote'.format(self.pkgr_scpuri)) == 0:
         print("Connection ok, Synchronizing...")
-        execute('rsync -rvhH --inplace --del --times --progress --stats bin/ remote')
+        execute('rsync -rvhlH --numeric-ids --del --inplace --times --progress --stats bin/ remote')
         os.sync()
       else:
         ok = False
@@ -1162,14 +1162,18 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
 
 class DeDup(object):
   """
-  De-duplicate files using hardlinks.
+  De-duplicate files using hardlinks or symlinks
   """
-  def __init__(self, use_time = True, use_name = False, use_content = True):
+  def __init__(self, linktype = 'hard', use_time = True, use_name = False, use_content = True):
     """
+    linktype could be 'hard', 'sym' or 'soft'. 'soft' is an alias for 'sym'
     If use_time is True, it will be used as part of the hash.
     If use_name is True, it will be used as part of the hash.
     If use_content is True, a sha1 is used with the content as part of the hash.
     """
+    if linktype not in ('hard', 'sym', 'soft'):
+      raise Exception('linktype should be hard, sym of soft')
+    self.use_hardlink = linktype == 'hard'
     self.use_time = use_time
     self.use_name = use_name
     self.use_content = use_content
@@ -1196,12 +1200,15 @@ class DeDup(object):
     return h
   def deduplicate(self, files = []):
     """
-    Find same file/content, and deduplicate them using hardlinks.
+    Find same file/content, and deduplicate them using links.
     """
     hashes = {}
     for fn in files:
-      if not os.path.isfile(fn) or os.path.islink(fn):
-        # skip non regular files and symlinks
+      if not os.path.isfile(fn):
+        # skip non regular files
+        continue
+      if self.use_hardlink and os.path.islink(fn):
+        # skip symlinks
         continue
       try:
         fs = os.stat(fn)
@@ -1214,19 +1221,37 @@ class DeDup(object):
         else:
           hashes[h].append((fn, fs))
     for dups in [lst for lst in hashes.values() if len(lst) > 1]:
-      fn0, fs0 = dups[0]
-      others = dups[1:]
-      for fn, fs in others:
-        if self._ishardlinkto(fs0, fs):
-          break
-      else:
-        # fn0 is not a hard link to any other
+      if self.use_hardlink:
+        fn0, fs0 = dups[0]
+        others = dups[1:]
         for fn, fs in others:
-          try:
-            os.remove(fn)
-            os.link(fn0, fn)
-          except:
-            print("Unexpected error while hardlinking {0} to {1}. You could have lost a file".format(fn, fn0), file = sys.stderr)
+          if self._ishardlinkto(fs0, fs):
+            break
+        else:
+          # fn0 is not a hard link to any other
+          for fn, fs in others:
+            try:
+              os.remove(fn)
+              os.link(fn0, fn)
+            except:
+              print("Unexpected error while hardlinking {0} to {1}. You could have lost a file".format(fn, fn0), file = sys.stderr)
+      else:
+        todel = None
+        for i in range(len(dups)):
+          fn, fs = dups[i]
+          if not todel and not os.path.islink(fn):
+            todel = i
+        if todel:
+          others = dups[:]
+          fn0, fs0 = dups[todel]
+          del(others[todel])
+          for fn, fs in others:
+            try:
+              os.remove(fn)
+              dest = os.path.relpath(fn0, os.path.dirname(fn))
+              os.symlink(dest, fn)
+            except:
+              print("Unexpected error while symlinking {0} to {1}. You could have lost a file".format(fn, fn0), file = sys.stderr)
 
 class SalixAction(argparse.Action):
   def __call__(self, parser, namespace, values, option_string = None):
