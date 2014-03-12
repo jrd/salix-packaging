@@ -1,5 +1,5 @@
-# vim: syn=sh ft=sh:
-version_pattern='sed -rn '\''/<a href="[^\/]+">/s,.*<a [^>]+>[^<]+-([0-9][^<]*)\.tar\.[bgx]z2?<.*,\\1,p'\''|sort -rV'
-help_text="To be used when the sources are files presented in a Apache directory."
-download_pattern=${dl_url}'/${pkgname}-${pkgver}.tar.gz'
+# vim: syn=python ft=python:
+version_pattern = r"""sed -rn '/<a href="[^\/]+">/s,.*<a [^>]+>[^<]+-([0-9][^<]*)\.tar\.[bgx]z2?<.*,\1,p'"""
+help_text = 'To be used when the sources are files presented in a Apache directory.'
+download_pattern = '{dl_url}/{pkgname}-{pkgver}.tar.gz'
 

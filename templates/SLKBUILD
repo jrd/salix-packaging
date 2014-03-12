@@ -1,14 +1,14 @@
 # vim: syn=sh ft=sh et sw=2 sts=2 ts=2 tw=0:
-#Packager: @PNAME@ <@PEMAIL@>
+#Packager: {pname} <{pemail}>
 
-pkgname=@NAME@
-pkgver=@VER@
-pkgrel=@RLZ@@PTAG@
-@ARCHVAR@
-source=(@DLURL@) # FIXME
-sourcetemplate=@PURL@/@PSCHEMA@/
+pkgname={name}
+pkgver={ver}
+pkgrel={rlz}{ptag}
+{archvar}
+source=({DLURL}) # FIXME
+sourcetemplate={purl}/{pschema}/
 docs=("readme" "install" "copying" "changelog" "authors" "news" "todo")
-url=@URL@
+url={url}
 #options=('noextract' 'nosrcpack' 'nostrip' 'noautodotnew')
 
 #doinst() {
@@ -22,5 +22,6 @@ slackdesc=\
 "FIXME"
 )
 
-build() {
-}
+build() {{{
+{build}
+}}}

@@ -1,4 +1,4 @@
-# vim: syn=sh ft=sh:
-version_pattern='grep -A1 "/files/latest/download"|sed -rn '\''/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\\1,;p}'\'
-help_text="To be used with http://sourceforge.net/projects/PROJECT/files/ url when the latest source is specified."
-download_pattern=${dl_url}'/${pkgname}-${pkgver}.tar.gz'
+# vim: syn=python ft=python:
+version_pattern = r"""grep -A1 "/files/latest/download"|sed -rn '/>Download /{s,.*Download .+-([^-]+)\.tar\.[bgx]z2? .*,\1,;p}'"""
+help_text = 'To be used with http://sourceforge.net/projects/PROJECT/files/ url when the latest source is specified.'
+download_pattern = '{dl_url}/{pkgname}-{pkgver}.tar.gz'

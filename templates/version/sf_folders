@@ -1,5 +1,5 @@
-# vim: syn=sh ft=sh:
-version_pattern='grep -B1 "Click to enter "|sed -rn '\''/href/{s,.*/([^/]+)/".*,\\1,;p}'\''|sort -rV'
-help_text="To be used with SourceForge files url when the version are specified in directories."
-download_pattern=${dl_url}'/${pkgname}-${pkgver}.tar.gz'
+# vim: syn=python ft=python:
+version_pattern = r"""grep -B1 "Click to enter "|sed -rn '/href/{s,.*/([^/]+)/".*,\\1,;p}'"""
+help_text = 'To be used with SourceForge files url when the version are specified in directories.'
+download_pattern = '{dl_url}/{pkgname}-{pkgver}.tar.gz'
 

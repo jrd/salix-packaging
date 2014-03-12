@@ -1,5 +1,5 @@
-# vim: syn=sh ft=sh:
-version_pattern='sed -rn '\''/\/archive\/.*\.tar\.gz.*"nofollow"/{s,.*/archive/(.*)\.tar.*,\\1,;s/^v//;p}'\''|sort -rV'
-help_text="To be used with https://github.com/USER/PROJECT/releases url."
-download_pattern=$(echo "$dl_url"|sed -r 's,/[^/]+/(tags|releases)/?,,')'/${pkgname}/archive/${pkgver}.tar.gz'
+# vim: syn=python ft=python:
+version_pattern = r"""sed -rn '/\/archive\/.*\.tar\.gz.*"nofollow"/{s,.*/archive/(.*)\.tar.*,\1,;s/^v//;p}'"""
+help_text = 'To be used with https://github.com/USER/PROJECT/releases url.'
+download_pattern = 'https://github.com/{pkgname}/{pkgname}/archive/{pkgver}.tar.gz'
 

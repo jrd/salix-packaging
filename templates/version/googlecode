@@ -1,5 +1,5 @@
-# vim: syn=sh ft=sh:
-version_pattern='sed -rn '\''/^<a href="\/\/.*\/files\/.*"/{s,<a href="[^"]+/files/[^"]+-(.+)\.tar.*,\\1,;p}'\''|sort -rV'
-help_text="To be used with http://code.google.com/p/PROJECT/downloads/list url."
-download_pattern='http://${pkgname}.googlecode.com/files/${pkgname}-${pkgver}.tar.xz'
+# vim: syn=python ft=python:
+version_pattern = r"""sed -rn '/^<a href="\/\/.*\/files\/.*"/{s,<a href="[^"]+/files/[^"]+-(.+)\.tar.*,\1,;p}'"""
+help_text = 'To be used with http://code.google.com/p/PROJECT/downloads/list url.'
+download_pattern = 'http://{pkgname}.googlecode.com/files/{pkgname}-{pkgver}.tar.xz'
 
