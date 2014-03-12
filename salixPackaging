@@ -979,7 +979,7 @@ Fixed version={cbold}{fixver}{cnone}""".format(sver = salix_ver, underline = '='
       copytree(src_dir, lxc_root + lxc_build)
       lxc_ip = re.search(r'lxc\.network\.ipv4 *= *(.+)/.+', cat('/var/lib/lxc/{0}/config'.format(lxc_name))).group(1)
       if deps:
-        if execute('ssh -t root@{ip} "installdeps {deps}"'.format(ip = lxc_ip, deps = deps)) != 0:
+        if execute('ssh -t root@{ip} "installdeps \'{deps}\'"'.format(ip = lxc_ip, deps = deps)) != 0:
           print("""{clred}Unable to install the dependencies for {pkg_name}-{pkg_ver} for {salix_ver}-{salix_arch}{cnone}
 Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver, salix_ver = salix_ver, salix_arch = salix_arch, deps = deps, clred = Colors.lred, cred = Colors.red, cnone = Colors.none), file = sys.stderr)
           sys.exit(1)
