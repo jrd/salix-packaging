@@ -5,15 +5,15 @@ pkgname={name}
 pkgver={ver}
 pkgrel={rlz}{ptag}
 {archvar}
-source=({DLURL}) # FIXME
+source=({dlurl}) # FIXME
 sourcetemplate={purl}/{pschema}/
 docs=("readme" "install" "copying" "changelog" "authors" "news" "todo")
 url={url}
 #options=('noextract' 'nosrcpack' 'nostrip' 'noautodotnew')
 
-#doinst() {
+#doinst() {{
 #
-#}
+#}}
 
 slackdesc=\
 (
@@ -22,6 +22,6 @@ slackdesc=\
 "FIXME"
 )
 
-build() {{{
-{build}
-}}}
+build() {{
+  {build}
+}}

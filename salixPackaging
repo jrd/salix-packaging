@@ -139,7 +139,7 @@ def wget(url, filename = None, func = None, func_data = {}, quiet = False):
     sys.exit(127)
   if filename:
     f = open(filename, 'w')
-    filter_func = None # ensure not both could be used
+    func = None # ensure not both could be used
   if not quiet:
     meta = req.info()
     meta_func = meta.getheaders if hasattr(meta, 'getheaders') else meta.get_all
@@ -218,17 +218,18 @@ def sort_software_versions(versions = [], reverse = True):
         return int(x)
       except:
         return x
-    version = map(toint, re.sub(r'([a-z])([0-9])', r'\1.\2', re.sub(r'([0-9])([a-z])', r'\1.\2', version.lower().replace('-', '.'))).split('.'))
+    version = map(toint, re.sub(r'([a-z])([0-9])', r'\1.\2', re.sub(r'([0-9])([a-z])', r'\1.\2', version.lower().replace('-', '.'))).replace('..', '.').split('.'))
+    return version
   def compare_version_list(l1, l2):
     def compare_version(v1, v2):
       if isinstance(v1, int):
         if isinstance(v2, int):
           return v1 - v2
         else:
-          return 1
+          return 1 # v1 > v2
       else:
         if isinstance(v2, int):
-          return -1
+          return -1 # v1 < v2
         else:
           return cmp(v1, v2)
     if not l1:
@@ -585,16 +586,18 @@ Example:
             elif pkg_check_schema == 'help':
               for c in choices:
                 execfile('templates/version/{tpl}'.format(tpl = c), {}, ctx)
-                print("{schema}: {version_pattern}\n    {help_text}".format(schema = c, version_pattern = ctx.version_pattern, help_text = ctx.help_text))
+                print('{schema}: {version_pattern}\n    {help_text}'.format(schema = c, version_pattern = ctx['version_pattern'], help_text = ctx['help_text']))
               pkg_check_schema = None
             else:
               execfile('templates/version/{tpl}'.format(tpl = pkg_check_schema), {}, ctx)
-              pkg_check_pattern = ctx.version_pattern
+              pkg_check_pattern = ctx['version_pattern']
           print("Pattern: {pattern}".format(pattern = pkg_check_pattern))
           pkg_versions = self.find_all_versions(pkg_dl_url, pkg_check_pattern)
-          print("Versions found: {vers}".format(vers = ','.join(pkg_versions)))
+          print("Versions found ({num}): {vers}".format(num = len(pkg_versions), vers = ', '.join(pkg_versions)))
           if read_choice('Pattern ok', ['y', 'n'], 'y') == 'y':
             break
+          else:
+            pkg_check_schema = None
         pkg_stable = read_choice('Allow betas versions', ['y', 'n'], 'n') == 'n'
         pkg_ver = self.find_latest_version(pkg_versions, pkg_stable)
         print("Latest version found: {ver}".format(ver = pkg_ver))
@@ -628,7 +631,7 @@ Example:
       sys.exit(1)
     return ctx['fpattern']
 
-  def find_all_versions(self, url, pattern, md5ref):
+  def find_all_versions(self, url, pattern, md5ref = None):
     """
     Returns a list of versions.
     "up to date:md5" or "changed:md5" for md5 checks
@@ -640,7 +643,7 @@ Example:
       content[0] += line
     wget(url, func = wget_func, quiet = True)
     content = content[0].replace(r"'", r"'\''")
-    versions = get_exec("echo '{0}'|{1}".format(content, pattern)).split('\n')
+    versions = get_exec("echo '{0}'|{1}".format(content, pattern)).strip().split('\n')
     if versions and [x for x in versions if 'MD5:' in x]:
       md5 = versions[0][len('MD5:'):]
       if md5 == md5ref:
@@ -667,35 +670,35 @@ Example:
         return None
 
   def get_md5sum_links(self, url):
-    contentlinks = ''
+    contentlinks = ['']
     def filter_links(line):
       if '<a href=' in line and 'http://' in line:
-        contentlinks += line
+        contentlinks[0] += line
     wget(url, func = filter_links, quiet = True)
-    return md5sum(contentlinks)
+    return md5sum(contentlinks[0])
 
   def store_package_info(self, salix_ver, pkg_name, pkg_arch, pkg_url, pkg_dl_url, pkg_check_schema, pkg_check_pattern, pkg_md5, pkg_ver, pkg_stable, pkg_fixver, pkg_build_schema):
     os.makedirs('src/{name}/{sver}'.format(name = pkg_name, sver = salix_ver))
-    with open('src/{name}/arch'.format(name = pkg_name)) as f:
+    with open('src/{name}/arch'.format(name = pkg_name), 'w') as f:
       f.write(pkg_arch)
-    with open('src/{name}/url'.format(name = pkg_name)) as f:
+    with open('src/{name}/url'.format(name = pkg_name), 'w') as f:
       f.write(pkg_url)
-    with open('src/{name}/dlurl'.format(name = pkg_name)) as f:
+    with open('src/{name}/dlurl'.format(name = pkg_name), 'w') as f:
       f.write(pkg_dl_url)
-    with open('src/{name}/md5sum'.format(name = pkg_name)) as f:
+    with open('src/{name}/md5sum'.format(name = pkg_name), 'w') as f:
       f.write(pkg_md5)
-    with open('src/{name}/schema'.format(name = pkg_name)) as f:
+    with open('src/{name}/schema'.format(name = pkg_name), 'w') as f:
       f.write(pkg_check_schema)
-    with open('src/{name}/pattern'.format(name = pkg_name)) as f:
+    with open('src/{name}/pattern'.format(name = pkg_name), 'w') as f:
       f.write(pkg_check_pattern)
-    with open('src/{name}/buildschema/'.format(name = pkg_name)) as f:
+    with open('src/{name}/buildschema'.format(name = pkg_name), 'w') as f:
       f.write(pkg_build_schema)
-    with open('src/{name}/{sver}/version'.format(name = pkg_name, sver = salix_ver)) as f:
+    with open('src/{name}/{sver}/version'.format(name = pkg_name, sver = salix_ver), 'w') as f:
       f.write(pkg_ver)
-    with open('src/{name}/{sver}/stable'.format(name = pkg_name, sver = salix_ver)) as f:
-      f.write(pkg_stable)
-    with open('src/{name}/{sver}/fixversion'.format(name = pkg_name, sver = salix_ver)) as f:
-      f.write(pkg_fixver)
+    with open('src/{name}/{sver}/stable'.format(name = pkg_name, sver = salix_ver), 'w') as f:
+      f.write(unicode(pkg_stable))
+    with open('src/{name}/{sver}/fixversion'.format(name = pkg_name, sver = salix_ver), 'w') as f:
+      f.write(unicode(pkg_fixver))
     self.store_package_build(pkg_name, pkg_ver, salix_ver)
     print("Information for package {cgreen}{pkg_name}{cnone} has been stored for {salix_ver}.".format(pkg_name = pkg_name, salix_ver = salix_ver, cgreen = Colors.green, cnone = Colors.none))
 
@@ -709,7 +712,7 @@ Example:
     if schema != 'custom':
       ctx = locals()
       execfile('templates/version/{tpl}'.format(tpl = schema), {}, ctx)
-      pkg_dl_url = ctx.download_pattern
+      pkg_dl_url = ctx['download_pattern']
     pkg_build_schema = cat('src/{name}/buildschema'.format(name = pkg_name))
     pkgr_email_dot = self.pkgr_email.replace('.', '~dot~').replace('@', '~at~')
     arch_var = ''
@@ -802,8 +805,8 @@ Build schema={build_schema}
 """.format(name = pkg_name, underline = '=' * len(pkg_name), arch = pkg_arch, url = pkg_url, dl_url = pkg_dl_url, md5 = pkg_md5, schema = pkg_check_schema, pattern = pkg_check_pattern, build_schema = pkg_build_schema, cbold = Colors.bold, clgreen = Colors.lgreen, cnone = Colors.none))
     for salix_ver in sorted([d for d in os.listdir('src/' + pkg_name) if not d.startswith('.') and os.path.isdir('src/{0}/{1}'.format(pkg_name, d))]):
       pkg_ver = cat('src/{0}/{1}/version'.format(pkg_name, salix_ver))
-      pkg_stable = cat('src/{0}/{1}/stable'.format(pkg_name, salix_ver))
-      pkg_fixver = cat('src/{0}/{1}/fixversion'.format(pkg_name, salix_ver))
+      pkg_stable = cat('src/{0}/{1}/stable'.format(pkg_name, salix_ver)) == 'True'
+      pkg_fixver = cat('src/{0}/{1}/fixversion'.format(pkg_name, salix_ver)) == 'True'
       print("""
 Versions for {clgreen}{sver}{cnone}
 ============={underline}
@@ -839,10 +842,10 @@ Fixed version={cbold}{fixver}{cnone}""".format(sver = salix_ver, underline = '='
     pkg_dl_url = cat('src/{0}/dlurl'.format(pkg_name))
     pkg_check_pattern = cat('src/{0}/pattern'.format(pkg_name))
     pkg_md5 = cat('src/{0}/md5sum'.format(pkg_name))
-    pkg_stable = cat('src/{0}/{1}/stable'.format(pkg_name, salix_ver))
+    pkg_stable = cat('src/{0}/{1}/stable'.format(pkg_name, salix_ver)) == 'True'
     pkg_new_ver = self.find_latest_version(self.find_all_versions(pkg_dl_url, pkg_check_pattern, pkg_md5), pkg_stable)
     pkg_ver = cat('src/{0}/{1}/version'.format(pkg_name, salix_ver))
-    pkg_fixver = cat('src/{0}/{1}/fixversion'.format(pkg_name, salix_ver))
+    pkg_fixver = cat('src/{0}/{1}/fixversion'.format(pkg_name, salix_ver)) == 'True'
     if pkg_ver == pkg_new_ver:
       print("{clgreen}Up to date{cnone} ({clcyan}{pkg_new_ver}{cnone})".format(pkg_new_ver = pkg_new_ver, clgreen = Colors.lgreen, clcyan = Colors.lcyan, cnone = Colors.none))
     elif pkg_new_ver and 'up to date:' in pkg_new_ver:
@@ -873,8 +876,8 @@ Fixed version={cbold}{fixver}{cnone}""".format(sver = salix_ver, underline = '='
     salix_ver = self.getarg('update', 2)
     if not os.path.isdir('src/{0}/{1}'.format(pkg_name, salix_ver)):
       sys.exit(1)
-    stable = cat('src/{0}/{1}/stable'.format(pkg_name, salix_ver))
-    pkg_fixver = cat('src/{0}/{1}/fixversion'.format(pkg_name, salix_ver))
+    stable = cat('src/{0}/{1}/stable'.format(pkg_name, salix_ver)) == 'True'
+    pkg_fixver = cat('src/{0}/{1}/fixversion'.format(pkg_name, salix_ver)) == 'True'
     if pkg_fixver:
       print('{clred}Cannot update, fix version requested{cnone}'.format(clred = Colors.lred, cnone = Colors.none), file = sys.stderr)
       sys.exit(1)
@@ -1049,7 +1052,7 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
     try:
       if execute('sshfs -o uid=$(id -u) -o gid=$(id -g) "{0}" remote'.format(self.pkgr_scpuri)) == 0:
         print("Connection ok, Synchronizing...")
-        execute('rsync -rvhlH --numeric-ids --del --inplace --times --progress --stats bin/ remote')
+        execute('rsync -rvhl --del --inplace --times --progress --stats bin/ remote')
         os.sync()
       else:
         ok = False
