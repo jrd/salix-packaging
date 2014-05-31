@@ -72,7 +72,8 @@ def execute(cmd):
 def get_exec(cmd):
   try:
     return subprocess.check_output(cmd, stderr = subprocess.STDOUT, preexec_fn = lambda: signal(SIGPIPE, SIG_DFL), shell = True)
-  except subprocess.CalledProcessError:
+  except subprocess.CalledProcessError as e:
+    print(e, file = sys.stderr)
     return None
 
 def read_info(prompt, default = None, check = lambda v: True):
@@ -160,12 +161,12 @@ def wget(url, filename = None, func = None, func_data = {}, quiet = False):
     encoding = 'utf-8'
   while True:
     if filename:
-      buf = req.read(block_sz).decode(encoding)
+      buf = req.read(block_sz).decode(encoding, 'ignore')
       if not buf:
         break
       f.write(buf)
     elif func:
-      line = req.readline().decode(encoding)
+      line = req.readline().decode(encoding, 'ignore')
       if not line:
         break
       buf = len(line)
@@ -853,6 +854,8 @@ Fixed version={cbold}{fixver}{cnone}""".format(sver = salix_ver, underline = '='
     pkg_md5 = cat('src/{0}/md5sum'.format(pkg_name))
     pkg_stable = cat('src/{0}/{1}/stable'.format(pkg_name, salix_ver)) == 'True'
     pkg_new_ver = self.find_latest_version(self.find_all_versions(pkg_dl_url, pkg_check_pattern, pkg_md5), pkg_stable)
+    if pkg_new_ver is None:
+      pkg_new_ver = 'up to date:'
     pkg_ver = cat('src/{0}/{1}/version'.format(pkg_name, salix_ver))
     pkg_fixver = cat('src/{0}/{1}/fixversion'.format(pkg_name, salix_ver)) == 'True'
     if pkg_ver == pkg_new_ver:
@@ -1032,6 +1035,7 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
             .replace('$arch', '{arch}')\
             .replace('$pkgrel', '{pkgrel}')\
             .format(pkgname = pkg_name, pkgver = pkg_ver_slackware, arch = pkg_arch, pkgrel = pkg_rel))
+        shutil.rmtree(bin_dir, ignore_errors = True)
         os.makedirs(bin_dir)
         copytree('{0}{1}'.format(lxc_root, lxc_build), bin_dir)
         print("{clgreen}Package {pkg_name}-{pkg_ver} building DONE for {salix_ver}-{salix_arch}{cnone}".format(pkg_name = pkg_name, pkg_ver = pkg_ver, salix_ver = salix_ver, salix_arch = salix_arch, clgreen = Colors.lgreen, cnone = Colors.none))
@@ -1061,7 +1065,7 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
     try:
       if execute('sshfs -o uid=$(id -u) -o gid=$(id -g) "{0}" remote'.format(self.pkgr_scpuri)) == 0:
         print("Connection ok, Synchronizing...")
-        execute('rsync -rvhl --del --inplace --times --progress --stats bin/ remote')
+        execute('rsync -rltu -vPh --del --inplace --stats bin/ remote')
         os.sync()
       else:
         ok = False
@@ -1147,15 +1151,16 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
           'ticket_form.description' : desc,
         })
         resp = urllib2.urlopen(urllib2.Request(newticket_url, data))
-        jsondata = json.loads(''.join(resp.readlines()))
+        jsondata = json.loads(resp.read().decode('utf-8'))
         ticket_id = jsondata['ticket']['ticket_num']
-      except:
+      except Exception as e:
+        print(e, file = sys.stderr)
         ticket_id = None
     else:
       try:
         infoticket_url = '{0}/rest/p/salix/packages/{1}'.format(base_url, ticket_id)
         resp = urllib2.urlopen(urllib2.Request(infoticket_url))
-        jsondata = json.loads(''.join(resp.readlines()))
+        jsondata = json.loads(resp.read().decode('utf-8'))
         thread_id = jsondata['ticket']['discussion_thread']['_id']
         postticket_url = '{0}/rest/p/salix/packages/_discuss/thread/{1}/new'.format(base_url, thread_id)
         data = urllib.urlencode({
@@ -1163,7 +1168,8 @@ Deps list: {cred}{deps}{cnone}""".format(pkg_name = pkg_name, pkg_ver = pkg_ver,
           'text' : desc,
         })
         resp = urllib2.urlopen(urllib2.Request(postticket_url, data))
-      except:
+      except Exception as e:
+        print(e, file = sys.stderr)
         ticket_id = None
     if ticket_id:
       print('Ticket posted: {0}{1}{2}/'.format(base_url, ticket_uri, ticket_id))
